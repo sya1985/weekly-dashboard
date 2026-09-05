@@ -1,0 +1,18 @@
+# 周报工作台容器编排：一条命令启动，数据自动持久化
+# 用法: docker compose up -d
+services:
+  weekly:
+    build: .
+    image: weekly-dashboard:latest
+    container_name: weekly-dashboard
+    ports:
+      - "7878:7878"          # 宿主机 7878 -> 容器 7878
+    volumes:
+      - ./data:/data         # SQLite 数据持久化到宿主机 ./data 目录
+      # ⚠️ 页面与后端必须挂载，否则容器 /app 为空、服务无法启动；
+      #    挂载后本地改 HTML/Python 即时生效，无需重建镜像。
+      - .:/app               # 整个项目目录挂进 /app，改文件即时生效
+    environment:
+      - PORT=7878
+      - DB_PATH=/data/weekly.db
+    restart: unless-stopped  # 机器/进程重启后自动拉起

@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<!-- 月度 OKR 独立页面（已从周报工作台拆分出来单独展示） -->
+<!-- 数据由后端 server.py 持久化到 SQLite（weekly.db），前端通过 /api/data 读写，与主页面共享同一份 state.okr -->
+<!-- 界面风格：浮动面板（白面板浮于浅灰纸）+ 荧光黄绿主色 + 近黑第二主色 -->
+<html lang="zh-CN" data-page-node-id="gMkFnU9x4rrGfPySLVbY3i">
+<head data-page-node-id="0PGIeQ00qgboggR8KCB5fy">
+<meta charset="UTF-8" data-page-node-id="sMJh6btlla4qGPpJYVUNDv">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" data-page-node-id="jb9xWeu7vADOQM2zTgBjeH">
+<title>月度 OKR</title>
+<style>
+
+/* =================================================================
+   月度 OKR · 首页
+   骨架：浮动面板 —— 整块圆角白面板浮在深一档的浅灰纸上（设计稿 1 方案 A）
+   主色：荧光黄绿 #d4ee4e（只做"点"，不铺面）+ 近黑 #1b1b14（进度 / 强调）
+   底色：中性浅灰 #e7e8e8（微冷一档，正好压住荧光绿自带的黄）
+   语义：绿 = 完成 / 进行中，红 = 逾期，琥珀 = 临期，日期类文字一律中性灰
+   ================================================================= */
+
+/* ---------------- 设计 token ---------------- */
+:root{
+  /* 中性灰阶：不带黄、不带青 */
+  --page:#e7e8e8;            /* 页面底：浅灰 */
+  --bg:#ffffff;              /* 浮动面板 / 卡片 */
+  --panel-2:#f2f3f3;         /* 次级块（列表底、输入、看板列） */
+  --panel-3:#e4e5e5;         /* 更深的次级（进度轨道、chip 底） */
+  --border:rgba(27,27,20,.09);
+  --border-2:rgba(27,27,20,.18);
+  --ink-1:#1b1b14; --ink-2:#3d3d36; --ink-3:#75756c; --ink-4:#a8a89e;
+
+  /* 主色：荧光黄绿只做"点"，近黑做第二主色 */
+  --lime:#d4ee4e;
+  --lime-soft:rgba(212,238,78,.34);
+  --accent:#5c7c0a;          /* 文字级绿，保证对比度 */
+  --accent-soft:rgba(92,124,10,.10);
+  --accent-2:#1b1b14;        /* 近黑：按钮 / 进度 / 强调 */
+  --glow:rgba(212,238,78,.20);
+
+  /* 语义色 */
+  --up:#3f7d3a;              /* 完成 = 绿 */
+  --up-soft:#d4ee4e57;       /* 进行中 = 浅绿（品牌 lime 的 34% 透明版，用户指定色值） */
+  --down:#c0453c;            /* 逾期 / 风险 = 红 */
+  --warn:#b06a1c;            /* 临期 = 琥珀 */
+  --cal-same:#BBC5FF;        /* 月历条·周内连续 = 浅蓝（用户指定 2026-09-04） */
+  --cal-xmon:#FCCD3E;        /* 月历条·跨月连续 = 橙（用户指定 2026-09-04） */
+
+  --r:20px; --r-sm:12px; --r-lg:32px;
+  --shadow:0 1px 3px rgba(27,27,20,.05);
+  --shadow-lg:0 40px 90px -50px rgba(27,27,20,.36);
+
+  /* ---------------- 兼容旧变量名 ----------------
+     ⚠️ 必须保留：JS 的 setSaveStatus() 用 var(--red)/var(--green)，
+     renderStats() 的饼图轨道用 var(--hover2)。删掉别名这些地方会变成透明。 */
+  --text:var(--ink-1); --muted:var(--ink-3); --faint:var(--ink-4);
+  --hover:var(--panel-2); --hover2:var(--panel-3);
+  --line:var(--border); --line2:var(--border-2);
+  --red:var(--down); --green:var(--up); --amber:var(--warn);
+  --radius:12px;
+  --red-bg:rgba(192,69,60,.11);   --red-tx:var(--down);
+  --green-bg:rgba(63,125,58,.12); --green-tx:var(--up);
+  --amber-bg:rgba(176,106,28,.12); --amber-tx:var(--warn);
+  --blue-bg:var(--accent-soft);   --blue-tx:var(--accent);
+  --gray-bg:var(--panel-2);       --gray-tx:var(--ink-3);
+}
+
+/* ---------------- 基础 ---------------- */
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0; padding:0;}
+/* ⚠️ 用 clip 不用 hidden：hidden 会让元素变成滚动容器，静默破坏 sticky 顶栏 */
+html{overflow-x:clip;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  background:var(--page); color:var(--ink-2); font-size:15px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:calc(40px + env(safe-area-inset-bottom));
+}
+
+/* ---------------- 浮动面板骨架 ---------------- */
+.wb{padding:26px 26px 46px;}
+.shell{
+  position:relative; max-width:1240px; margin:0 auto;
+  background:var(--bg); border-radius:var(--r-lg);
+  padding:0 34px 40px; box-shadow:var(--shadow-lg);
+}
+/* 角落品牌辉光：每屏一次。
+   ⚠️ 不用 .shell{overflow:hidden} 来裁圆角 —— 那会让 sticky 顶栏失效，
+   改为给辉光自身加右上圆角，并让它完全落在面板内。 */
+.shell::before{
+  content:""; position:absolute; top:0; right:0; width:420px; height:300px;
+  background:radial-gradient(closest-side at 82% 12%, var(--glow), transparent 72%);
+  border-radius:0 var(--r-lg) 0 0; pointer-events:none; z-index:0;
+}
+.shell > *{position:relative; z-index:1;}
+
+/* ---------------- 顶栏（sticky，无主菜单） ---------------- */
+.topbar{
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  margin:0 -34px; padding:22px 34px 18px;
+  background:var(--bg); border-radius:var(--r-lg) var(--r-lg) 0 0;
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex; align-items:baseline; gap:12px; min-width:0;}
+.brand h1{font-size:23px; font-weight:780; letter-spacing:-.02em; margin:0; color:var(--ink-1);}
+.brand .date{font-size:13px; color:var(--ink-3); font-variant-numeric:tabular-nums;}
+.brand .mark{display:inline-block; width:11px; height:11px; background:var(--lime);
+  border-radius:3px; transform:rotate(45deg); margin-right:7px; vertical-align:middle;}
+.topbar .acts{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+
+.status{display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ink-3);
+  background:var(--panel-2); padding:6px 13px; border-radius:999px;}
+.status .dot{width:7px; height:7px; border-radius:50%; background:var(--up);}
+.status.is-err .dot{background:var(--down);}
+.status.is-err{color:var(--down);}
+
+/* ---------------- 栅格：左栏（月历 / OKR） + 右栏（待办 / 周报 / 完成度） ---------------- */
+.grid{display:grid; gap:18px; align-items:start; margin-top:18px;}
+/* ⚠️ 两列都必须 minmax(0,…)：裸 1fr / 固定 px 的最小尺寸是 auto，长内容会把列撑破（右侧越界） */
+.home-grid{grid-template-columns:minmax(0,1fr) minmax(0,336px);}
+/* ⚠️ .col 自身是栅格项，默认 min-width:auto —— 必须显式归零，否则内部卡片会把整列顶宽 */
+.col{display:grid; gap:18px; align-content:start; min-width:0;}
+
+/* ---------------- 卡片 ---------------- */
+.card{background:var(--bg); border-radius:var(--r); padding:20px 22px;
+  border:1px solid var(--border); box-shadow:var(--shadow); min-width:0;}
+.card-h{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:15px; min-width:0;}
+.card-h h2{min-width:0;}
+.card-h h2{font-size:15.5px; font-weight:700; letter-spacing:-.01em; margin:0; color:var(--ink-1);
+  display:flex; align-items:center; gap:9px;}
+.card-h h2 .ic{width:26px; height:26px; border-radius:8px; background:var(--accent-soft);
+  color:var(--accent); display:inline-flex; align-items:center; justify-content:center;
+  font-size:13px; flex:0 0 auto;}
+.card-h h2 .ic svg{width:15px; height:15px; display:block;}
+.card-h .meta{font-size:12px; color:var(--ink-3); font-variant-numeric:tabular-nums;}
+
+/* ---------------- 按钮 ---------------- */
+button{font-size:13px; font-family:inherit; cursor:pointer; border:1px solid var(--border);
+  border-radius:10px; padding:7px 14px; min-height:34px; background:var(--bg); color:var(--ink-2);
+  font-weight:620; display:inline-flex; align-items:center; gap:6px; justify-content:center;
+  transition:background .12s, border-color .12s;}
+button:hover{background:var(--panel-2);}
+button:active{background:var(--panel-3);}
+button.sm{min-height:30px; padding:5px 11px; font-size:12.5px;}
+button.ghost{background:transparent; border-color:var(--border);}
+button.ghost:hover{background:var(--panel-2);}
+button.primary{background:var(--accent-2); color:#fff; border-color:transparent;
+  box-shadow:0 8px 22px -10px rgba(27,27,20,.5);}
+button.primary:hover{background:#000;}
+
+.iconbtn{width:28px; height:28px; padding:0; background:transparent; color:var(--ink-4);
+  border:none; border-radius:8px; cursor:pointer; display:inline-flex;
+  align-items:center; justify-content:center;}
+.iconbtn:hover{background:var(--panel-2); color:var(--down);}
+/* 键盘焦点可见：Tab 导航时给出明确焦点环 */
+button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+.mnav:hover{color:var(--ink-1);}          /* 月份导航不是危险操作，hover 不转红 */
+.mnav:disabled{opacity:.3; cursor:not-allowed;}
+.mnav:disabled:hover{background:transparent; color:var(--ink-4);}
+
+/* ---------------- 自绘确认弹窗（替代原生 confirm） ---------------- */
+/* 从周报页移植：遮罩 + 居中对话框，标题/文案/按钮文字由 openConfirm 动态注入 */
+.edit-modal{position:fixed; inset:0; z-index:1000; display:none; align-items:center; justify-content:center;
+  padding:20px; background:rgba(27,27,20,.42);}
+.edit-modal.open{display:flex;}
+.confirm-dialog{width:min(100%,380px); background:var(--bg); border:1px solid var(--border);
+  border-radius:var(--r); box-shadow:0 24px 70px rgba(27,27,20,.24); padding:22px;}
+.confirm-dialog .confirm-msg{margin:0 0 18px; color:var(--ink-1); font-size:14px; line-height:1.7;
+  overflow-wrap:anywhere;}
+.confirm-dialog .modal-actions{display:flex; justify-content:flex-end; gap:8px;}
+button.danger{background:var(--down); color:#fff; border-color:transparent;}
+button.danger:hover{filter:brightness(.94);}
+
+/* ---------------- 结果通知：页面内 Message（顶部居中轻提示） ---------------- */
+/* ⚠️ 规范：业务结果走页面内 Message，禁止原生 alert/confirm，也不依赖浏览器 Notification
+   （后者需用户授权、被拒后完全静默）。形态：顶部居中胶囊条，2.5s 后淡出，多条上下堆叠。
+   配色：成功/信息 = 荧光绿 --lime 左边条，失败 = --down 红。z-index 1200 压过 sticky 顶栏与弹窗。 */
+.wb-msg{position:fixed; top:18px; left:50%; transform:translateX(-50%); z-index:1200;
+  display:grid; gap:10px; justify-items:center; width:max-content; max-width:calc(100vw - 32px);
+  pointer-events:none;}
+.wb-msg-item{background:var(--bg); border:1px solid var(--border); border-left:3px solid var(--lime);
+  border-radius:10px; box-shadow:0 14px 40px rgba(27,27,20,.18); padding:11px 16px; max-width:420px;
+  animation:wb-msg-in .2s ease-out; transition:opacity .25s, transform .25s;}
+.wb-msg-item.is-err{border-left-color:var(--down);}
+.wb-msg-item.is-out{opacity:0; transform:translateY(-8px);}
+.wb-msg-item b{display:block; font-size:13.5px; font-weight:650; color:var(--ink-1);}
+.wb-msg-item span{display:block; font-size:12.5px; color:var(--ink-2); line-height:1.6;
+  margin-top:2px; overflow-wrap:anywhere;}
+@keyframes wb-msg-in{from{opacity:0; transform:translateY(-10px);} to{opacity:1; transform:none;}}
+
+/* ---------------- 表单 ---------------- */
+form.row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+input,select,textarea{font-size:13.5px; font-family:inherit; color:var(--ink-1);
+  background:var(--panel-2); border:1px solid transparent; border-radius:10px;
+  padding:9px 12px; outline:none;}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft); background:var(--bg);}
+input::placeholder,textarea::placeholder{color:var(--ink-4);}
+input.flex1{flex:1; min-width:160px;}
+
+/* ---------------- 今天要处理 ---------------- */
+/* ⚠️ 右栏只有 336px，条目内部必须全部可收缩（min-width:0 + 省略号），
+   否则长任务名 + 「逾期」pill + 「完成」按钮会一起把卡片顶出右边界 */
+.alert-item{position:relative; display:flex; align-items:center; gap:10px; min-width:0;
+  padding:11px 14px 11px 18px; border-radius:var(--r-sm); overflow:hidden;
+  background:var(--panel-2); margin-bottom:8px; border:1px solid transparent;}
+.alert-item:last-child{margin-bottom:0;}
+/* 左侧状态条：逾期 = 红，其余 = 中性灰 */
+.alert-item::before{content:""; position:absolute; left:8px; top:50%;
+  transform:translateY(-50%); width:3px; height:28px; border-radius:2px; background:var(--ink-4);}
+.alert-item.overdue::before{background:var(--down);}
+.alert-item.overdue{background:rgba(192,69,60,.07); border-color:rgba(192,69,60,.14);}
+.alert-item .meta{flex:1 1 0; min-width:0;}
+/* 用户要求：文字显示不下时换行，不要省略号。
+   ⚠️ 用 overflow-wrap:break-word 而非 word-break:break-all：
+   前者在空格/分隔符处断行，避免把 "2026-08-28" 这类日期拦腰截断 */
+.alert-item .meta .t{font-size:13.5px; color:var(--ink-1); font-weight:620;
+  line-height:1.45; word-break:normal; overflow-wrap:break-word;}
+.alert-item .meta .s{font-size:11.5px; color:var(--ink-3); margin-top:2px;
+  line-height:1.4; word-break:normal; overflow-wrap:break-word;}
+/* 「完成」按钮不参与收缩，保证可点击；文字由 meta 侧让出空间 */
+.btn-done{flex:0 0 auto; min-height:26px; padding:3px 10px; font-size:12px; border-radius:8px;}
+.pill{font-size:11px; font-weight:660; padding:2px 8px; border-radius:6px; flex:0 0 auto;
+  background:var(--bg); color:var(--ink-3); white-space:nowrap; letter-spacing:.02em;}
+.alert-item.overdue .pill{background:rgba(192,69,60,.13); color:var(--down);}
+
+/* ---------------- 月度 OKR ---------------- */
+.weeknav{display:flex; align-items:center; gap:9px; margin-bottom:14px; flex-wrap:wrap;}
+.weeknav .wlabel{font-size:15px; font-weight:730; color:var(--ink-1);
+  font-variant-numeric:tabular-nums; letter-spacing:-.01em;}
+.list{display:flex; flex-direction:column;}
+
+.obj{border-top:1px solid var(--border); padding:16px 0 4px; margin-top:2px;}
+.obj:first-of-type{border-top:0; padding-top:2px;}
+.obj-head{display:flex; align-items:center; gap:10px; margin-bottom:2px;}
+.obj-title{font-size:14.5px; font-weight:700; color:var(--ink-1); flex:1;}
+/* O/KR 编号标号：O 用荧光绿实心徽标（品牌主色），KR 用小号中性灰序号 */
+.o-idx{display:inline-block; font-size:11px; font-weight:800; color:var(--accent-2);
+  background:var(--lime); padding:1px 7px; border-radius:6px; margin-right:8px; vertical-align:1px;}
+.kr-idx{flex:none; font-size:11px; font-weight:800; color:var(--ink-3);
+  font-variant-numeric:tabular-nums; padding-top:7px; margin-right:1px;}
+.obar{height:6px; background:var(--panel-3); border-radius:999px; overflow:hidden; margin:9px 0 8px;}
+/* 内层填充不带圆角，由外层 overflow:hidden 裁出圆角 → 100% 满填充无空隙 */
+.obar > i{display:block; height:100%; width:0; min-width:0; border-radius:0;
+  background:var(--accent-2); transition:width .2s, background .2s;}
+.obj-pct{font-size:12px; color:var(--ink-3); margin-bottom:6px; font-variant-numeric:tabular-nums;}
+
+.kr{border-top:1px solid var(--border); padding-top:12px; margin-top:12px;}
+.kr-textwrap{margin-bottom:8px; display:flex; align-items:flex-start; gap:7px;}
+.kr-textwrap .kr-txt{flex:1; width:auto;}
+.kr-txt{width:100%; display:block; border:1px solid transparent; border-radius:10px;
+  padding:8px 11px; background:var(--panel-2); font-size:13.5px; line-height:1.6;
+  font-family:inherit; resize:none; overflow:hidden;}
+.kr-txt:focus{border-color:var(--accent); background:var(--bg); box-shadow:0 0 0 3px var(--accent-soft);}
+.kr-row{display:flex; align-items:center; gap:11px; flex-wrap:wrap;}
+
+/* KR 进度滑块：轨道近黑填充 + 白色圆钮（设计稿 slider 语法）
+   ⚠️ WebKit 不支持轨道分段着色，用 linear-gradient + JS 同步的 --val 做硬分割 */
+.kr-rng{-webkit-appearance:none; appearance:none; background:transparent;
+  padding:0 9px; margin:0; border:0; width:240px; height:20px; max-width:100%;
+  box-sizing:border-box; flex:0 0 auto; min-width:0; outline:none;}
+.kr-rng::-webkit-slider-runnable-track{height:5px; border-radius:999px;
+  background:linear-gradient(to right, var(--kr-color,var(--accent-2)) var(--val,0%), var(--panel-3) var(--val,0%));}
+.kr-rng::-moz-range-track{height:5px; border-radius:999px; background:var(--panel-3); border:0;}
+.kr-rng::-webkit-slider-thumb{-webkit-appearance:none; appearance:none;
+  width:15px; height:15px; border-radius:50%; background:var(--bg);
+  border:2.5px solid var(--accent-2); box-sizing:border-box;
+  margin-top:-5px; box-shadow:0 1px 3px rgba(27,27,20,.18); cursor:pointer;}
+.kr-rng::-moz-range-thumb{width:14px; height:14px; border-radius:50%; background:var(--bg);
+  border:2.5px solid var(--accent-2);
+  box-shadow:0 1px 3px rgba(27,27,20,.18); cursor:pointer;}
+.kr-rng::-moz-range-progress{height:5px; border-radius:999px; background:var(--kr-color,var(--accent-2));}
+.kr-pct{flex:0 0 auto; min-width:40px; text-align:right; font-size:12.5px;
+  color:var(--ink-1); font-weight:680; font-variant-numeric:tabular-nums;}
+.kr-add{display:flex; gap:8px; margin-top:12px;}
+.kr-add .kr-txt{flex:1;}
+
+/* ---------------- 完成情况（环形图） ---------------- */
+.donut-wrap{display:flex; align-items:center; gap:16px;}
+.donut{width:116px; height:116px; flex:0 0 116px;}
+.legend{display:grid; gap:9px; flex:1 1 0; min-width:0;}
+.legend .row{display:flex; align-items:center; gap:9px; font-size:12.5px; color:var(--ink-3);}
+.legend .dot{width:9px; height:9px; border-radius:3px; flex:0 0 auto;}
+.legend .lab{flex:1; color:var(--ink-3);}
+.legend .num{font-weight:700; color:var(--ink-1); font-variant-numeric:tabular-nums;}
+.legend .sub{font-size:11.5px; color:var(--ink-3); margin-top:4px;}
+
+/* ---------------- 暗色卡片（OKR完成情况） ----------------
+   底色用近黑 --accent-2，荧光绿作强调；文字全部提亮以守住对比度。
+   ⚠️ 只影响加了 .card-dark 的卡片，其它卡片保持浅色，避免整页换肤。 */
+.card-dark{background:var(--accent-2); border-color:transparent;
+  box-shadow:0 16px 34px -20px rgba(27,27,20,.65);}
+.card-dark .card-h h2{color:#f7f7f2;}
+.card-dark .card-h h2 .ic{background:rgba(212,238,78,.16); color:var(--lime);}
+.card-dark .legend .row{color:rgba(255,255,255,.72);}
+.card-dark .legend .lab{color:rgba(255,255,255,.72);}
+.card-dark .legend .num{color:#f7f7f2;}
+.card-dark .legend .sub{color:rgba(255,255,255,.55);}
+
+/* ---------------- 周报入口 ---------------- */
+.weeklinks{display:grid; grid-template-columns:1fr; gap:8px;}
+.wlink{display:flex; align-items:center; gap:10px; padding:11px 14px;
+  border-radius:var(--r-sm); background:var(--panel-2); text-decoration:none;
+  color:inherit; border:1px solid transparent; transition:background .12s;}
+.wlink:hover{background:var(--panel-3);}
+.wlink .wl-label{font-size:12.5px; font-weight:680; color:var(--ink-1);
+  font-variant-numeric:tabular-nums;}
+.wlink .wl-range{font-size:11.5px; color:var(--ink-3); margin-left:auto;}
+.wlink.cur{background:var(--lime-soft); border-color:rgba(92,124,10,.18);}
+.wlink.cur .wl-label{color:var(--accent);}
+
+/* ---------------- 空状态 ---------------- */
+.empty{color:var(--ink-3); font-size:13px; padding:6px 2px;}
+.empty-illu{display:flex; flex-direction:column; align-items:center; gap:8px;
+  padding:24px 0 14px; text-align:center;}
+.empty-illu svg{width:118px; height:118px; opacity:.97;}
+.empty-illu .empty-state-img{width:118px; height:118px; object-fit:contain; opacity:.97;}
+.empty-illu.small svg{width:92px; height:92px;}
+.empty-illu.small .empty-state-img{width:92px; height:92px;}
+.empty-illu .t{font-size:13px; color:var(--ink-3);}
+.empty-illu .s{font-size:12px; color:var(--ink-4); margin-top:-2px;}
+
+/* ---------------- 执行月历 ---------------- */
+.exec-calendar{min-width:0;}
+.exec-calendar .cal-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;}
+.exec-calendar .cal-title{font-size:13.5px; font-weight:700; color:var(--ink-1);}
+.exec-calendar .cal-note{font-size:11.5px; color:var(--ink-3);}
+.cal-grid{display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px;}
+.cal-weekday{font-size:10.5px; color:var(--ink-4); text-align:center; padding:3px 0;}
+/* 跨天/跨周连续条：直接画在日期格内部——任务覆盖到的每个格子各放一段，
+   首段显示文字，跨周接续段带 ↳ 前缀，中间/尾段为无字延续条；
+   段与段同高同色，跨周时在下一行接着画，视觉上自然连成一条。
+   颜色语义（用户定稿 2026-09-04）：跨周 = 荧光绿（默认，品牌主色）、周内 = 浅蓝、跨月 = 橙。 */
+.cal-weekrow{grid-column:1 / -1; min-width:0;}
+.cal-seg{position:relative; display:block; height:15px; margin-top:3px; border-radius:5px;
+  background:var(--lime); color:var(--accent-2); min-width:0; cursor:default;}
+.cal-seg.same{background:var(--cal-same);}
+.cal-seg.xmon{background:var(--cal-xmon);}
+/* 单日（周内不连续）任务用回原来的单日片配色：完成 = 浅绿、进行中 = lime-soft */
+.cal-seg.single{background:var(--lime-soft); color:var(--ink-1);}
+.cal-seg.single.done{background:rgba(63,125,58,.15); color:var(--up);}
+/* 车道空位占位片：不可见但撑住行高，保证同一任务横向各格对齐同一条车道 */
+.cal-seg.ph{visibility:hidden; pointer-events:none;}
+.cal-seg.head{padding:0 5px; color:var(--accent-2); font-size:10px; line-height:15px;}
+.cal-seg.head .cal-seg-label{display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+/* ⚠️ 相邻两格条段的接缝宽度 = 各自 padding5 + border1 + 网格 gap4 = 16px；
+   相连侧各用负 margin 伸出 9px（2px 重叠防发丝缝），必须实色（带透明度会叠加出深色接缝带），
+   衔接处转直角，视觉上连成一整条。 */
+.cal-seg.cont-l{margin-left:-9px; border-top-left-radius:0; border-bottom-left-radius:0;}
+.cal-seg.cont-r{margin-right:-9px; border-top-right-radius:0; border-bottom-right-radius:0;}
+.cal-days{display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px;}
+.cal-day{min-height:58px; padding:5px; border-radius:8px; background:var(--panel-2); border:1px solid transparent; min-width:0;}
+.cal-day.muted{opacity:.45;}
+.cal-day.today{border-color:var(--accent);}
+.cal-day .num{font-size:11px; color:var(--ink-3); font-variant-numeric:tabular-nums;}
+.cal-seg .task-tooltip{position:absolute; left:0; bottom:calc(100% + 7px); z-index:50; display:none;
+  width:230px; padding:9px 11px; border-radius:8px; background:var(--accent-2); color:#fff; text-align:left;
+  font-size:11.5px; line-height:1.55; white-space:normal; word-break:break-word;
+  box-shadow:0 8px 24px rgba(27,27,20,.25); pointer-events:none;}
+.cal-seg:hover .task-tooltip,.cal-seg:focus-visible .task-tooltip{display:block;}
+.cal-seg .task-tooltip::after{content:""; position:absolute; left:12px; top:100%; border:5px solid transparent; border-top-color:var(--accent-2);}
+/* ⚠️ 月历最后两列的任务若 Tooltip 仍向右展开会溢出卡片右缘 → 翻转为右对齐（箭头同步翻转）
+   （条段都画在 .cal-day 内部，日期格第 6/7 列即 nth-child(6)/(7)，其内所有 Tooltip 统一翻边） */
+.cal-days .cal-day:nth-child(6) .task-tooltip,.cal-days .cal-day:nth-child(7) .task-tooltip{left:auto; right:0;}
+.cal-days .cal-day:nth-child(6) .task-tooltip::after,.cal-days .cal-day:nth-child(7) .task-tooltip::after{left:auto; right:12px;}
+
+/* ---------------- 响应式 ---------------- */
+@media (max-width:900px){
+  .wb{padding:14px 12px 32px;}
+  .shell{padding:0 18px 28px; border-radius:22px;}
+  .topbar{margin:0 -18px; padding:18px 18px 14px; border-radius:22px 22px 0 0;}
+  /* 窄屏单列：两栏各卡片顺序为 月历 → OKR → 待办 → 周报 → 完成度，
+     ⚠️ 用 order 把「今天要处理」提到周报之前，保证手机端优先级最高的信息在上方 */
+  .home-grid{grid-template-columns:minmax(0,1fr);}
+  .col-right > section:nth-child(1){order:1;}   /* 今天要处理 */
+  .col-left  > section:nth-child(1){order:2;}   /* 执行月历 */
+  .col-left  > section:nth-child(2){order:3;}   /* 月度 OKR */
+  .col-right > section:nth-child(2){order:4;}   /* 周报 */
+  .col-right > section:nth-child(3){order:5;}   /* OKR完成情况 */
+  .col-right,.col-left{display:contents;}
+  .brand h1{font-size:20px;}
+}
+@media (max-width:560px){
+  .card{padding:16px 16px;}
+  .donut{width:104px; height:104px; flex:0 0 104px;}
+  .kr-rng{width:100%;}
+  .topbar .acts{width:100%;}
+}
+/* 触屏没有 hover：Objective 删除按钮常显并标红，否则平板/手机无法删除目标 */
+@media (hover:none){
+  .obj-head .iconbtn{opacity:1; color:var(--down);}
+}
+
+</style>
+</head>
+<body data-page-node-id="ImweirLqbWYC0fdbvPb8do">
+<div class="wb" data-page-node-id="jDZFlLsQyDXomWc5A9xSJb"><div class="shell" data-page-node-id="S31A3Dtnig139QGCaUQZAw">
+
+  <header class="topbar" data-page-node-id="t5XJJLXRwz5KSCwpwWlCmU">
+    <div class="brand" data-page-node-id="EwTCQ46FuCjtfFf4v539gP">
+      <h1 data-page-node-id="O1hhSNrPyee0SgfR7Xnxvl"><span class="mark" data-page-node-id="RF8zuZyEIr2zA8c33Yq2RU"></span><span id="wbTitle" data-page-node-id="KBlbW631izyBwsJ7uHDjRH">个人工作台</span></h1>
+      <span class="date" id="hdrDate" data-page-node-id="04nURLXs4adV0UdSNDJXHX"></span>
+    </div>
+    <div class="acts" data-page-node-id="uRtYL5xtzak6e5EzcxvU2c">
+      <span class="status" id="syncBadge" title="数据由后端服务持久化到 SQLite（weekly.db）" data-page-node-id="QvQcNestm2WjcBTQJceABx">
+        <i class="dot" id="syncDot" data-page-node-id="KgxDSfhrEum7plEfooaEBh"></i><span id="syncText" data-page-node-id="pAzGapsOxD5kGtOn67SgpU">本地服务 · 数据持久化</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="grid home-grid" data-page-node-id="sLoDuWWl4GqSaA5zaPNGBc">
+
+    <!-- 左栏：执行月历 + 月度 OKR -->
+    <div class="col col-left" data-page-node-id="iGw6UEIzrPuJuQW9BKrcpN">
+
+      <section class="card" data-page-node-id="e6nFDmZJTxINfvYeuUz10Y">
+        <div class="card-h" data-page-node-id="HFx7T9KtZKhxCRXUGppM7a"><h2 data-page-node-id="2dw4GnsILvCiNFamEYyTR1"><span class="ic" data-page-node-id="2Dc81mnEXbbaIzbFNSScmn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="YzOSqnbUgpbtHzkNq2aguJ"><rect x="3" y="4" width="18" height="17" rx="2" data-page-node-id="52PF6avZhLHFekSFCyKkBc"/><path d="M8 2v4M16 2v4M3 9h18" data-page-node-id="gMLOWLVzqjZDkBkuoOn690"/></svg></span>执行月历</h2></div>
+        <!-- ⚠️ 月份导航统一放在月历内：它同时驱动 执行月历 / 月度 OKR / 周报 三个模块的数据 -->
+        <div class="weeknav" data-page-node-id="6c007fIeWFmAQaEF5nb561">
+          <button class="iconbtn mnav" data-dir="-1" title="上一月" data-page-node-id="VtVfOXGen0yGp7JjF2b65e"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="o2JFadCqmHKEp5rm06cxuf"><path d="M15 6l-6 6 6 6" data-page-node-id="GK2KGb9h5o8swNRBiHC0pH"/></svg></button>
+          <span class="wlabel" id="okrMonthLabel" data-page-node-id="CKkIhz7FB8fenWtSWcg82e"></span>
+          <button class="iconbtn mnav" data-dir="1" title="下一月" data-page-node-id="gv1eZguCm9LlbdG4SVHdPz"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="MDjoUWyd7VM2kNeacXnz2k"><path d="M9 6l6 6-6 6" data-page-node-id="RJNE81DCyVN2efuPa1xrTZ"/></svg></button>
+          <button class="ghost sm" id="okrMonthTodayBtn" data-page-node-id="AYhkCwRbJoPTliqadFsTb7">本月</button>
+        </div>
+        <div id="execCalendar" data-page-node-id="OdA7KABvWNTCb4jllgkdpT"></div>
+      </section>
+
+      <section class="card" data-page-node-id="vpVhvXvvMb9aULMjam4FID">
+        <div class="card-h" data-page-node-id="raXD1AHnyHwnRkQdkOB27K"><h2 data-page-node-id="NkmiLlc0jtcE86dLYYroT7"><span class="ic" data-page-node-id="1Zy4PQm4WMIOebCwil2EhB"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="0WrRyI6BIrEH56wlePBGZt"><circle cx="12" cy="12" r="8.5" data-page-node-id="EfC5EGF6pNlHojtwyti1xO"/><circle cx="12" cy="12" r="3.2" data-page-node-id="lklD9MrfAVnFOh0d6COrjI"/></svg></span>月度 OKR</h2><span class="meta" data-page-node-id="FQ3grk4GsZCY1I0JARMnSb">Objective / Key Results</span></div>
+        <form class="row" id="okrForm" autocomplete="off" style="margin-bottom:14px;" data-page-node-id="E5Onfm0hbTB5mFb6ypAUKR"><input class="flex1" id="oTitle" placeholder="本月目标 Objective（O）" required data-page-node-id="mIbk9uTCm7PNEgIOtiYB5b"><button type="submit" class="primary" data-page-node-id="LvdqdE6qCntfb0tUDHqNVb">添加目标</button></form>
+        <div class="list" id="okrList" data-page-node-id="vPfcERBaSDq9lHOOp88C7s"></div>
+      </section>
+
+    </div>
+
+    <!-- 右栏：今天要处理 + 周报 + OKR完成情况 -->
+    <div class="col col-right" data-page-node-id="gwy3YUsbKRJ5KETTwnoQkh">
+
+      <section class="card" data-page-node-id="ln9xzleApmSiCV25EAWKRB">
+        <div class="card-h" data-page-node-id="RxPSBp8A2DyLd5IGIO4RHX"><h2 data-page-node-id="Yyxr3mlTyIkEuLoaMhIZDs"><span class="ic" data-page-node-id="LGSustg9L85ZcyCOUwYF9x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="y0c4ndtyd9wMtmFhRTyffR"><circle cx="12" cy="12" r="8.5" data-page-node-id="tXc3uUdeTuaWOC11jsGHBF"/><path d="M12 7.4V12l3.3 2" data-page-node-id="aMVy2C1FCG9XosT0GJDp0s"/></svg></span>今天要处理</h2><span class="meta" id="todayCount" data-page-node-id="uuSQz6dw7zuN2kAAQypCVu"></span></div>
+        <div id="todayList" data-page-node-id="wyY8C3bpRonEnGVtCDRg8C"></div>
+      </section>
+
+      <section class="card" data-page-node-id="MqytbKZDbfldWxNXON3V5n">
+        <div class="card-h" data-page-node-id="4UcqRth1JvKhpd6kh10ZZc"><h2 data-page-node-id="r5TC6BUziS7wvY5dIphgue"><span class="ic" data-page-node-id="dQt6NbSDgdxybiqDTmsT1O"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="DwNBIRpy2GTTLwnShBJL7w"><path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z" data-page-node-id="aJJtmCHEsmYRzFHaOD6hzN"/><path d="M13.5 3v5.5H19" data-page-node-id="y21DOWZgJrbRvjeM9Jq5Ar"/></svg></span>周报</h2><span class="meta" id="weekCount" data-page-node-id="Jhh1SCUxWrODOCWzGdfcd9"></span></div>
+        <div class="weeklinks" id="weekLinks" data-page-node-id="I59A7pC3Ypzw3PSRYamO5k"></div>
+        <div id="monthTaskEmpty" data-page-node-id="k8jmRAuazOhvv8eJ1ClHlr"></div>
+      </section>
+
+      <section class="card card-dark" data-page-node-id="RAdwGmMtBsJo2PenMm6WSL">
+        <div class="card-h" data-page-node-id="VKmcjKAmDV6gcTXTT05Env"><h2 data-page-node-id="SbGrkt2yY4jehlZwWlJhcG"><span class="ic" data-page-node-id="puEEI8sTONM4bj6Rm3eVqR"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="CGZSP8ci4nnxpMXqATeEgd"><circle cx="12" cy="12" r="8.5" data-page-node-id="IjuYqHB4ecQlyXXAvC52BA"/><path d="M12 3.5a8.5 8.5 0 0 1 8.5 8.5" stroke-width="3.2" data-page-node-id="8vU4rEd8cFvs2jHPZDJfq8"/></svg></span>OKR完成情况</h2></div>
+        <div class="donut-wrap" data-page-node-id="lTpKFipRka0Ah5Cuciqcnj"><svg class="donut" id="donut" viewBox="0 0 150 150" role="img" aria-label="完成情况饼图" data-page-node-id="EBzGkMzxGDcS568s1Vw1U6"></svg><div class="legend" id="legend" data-page-node-id="Of2aWX4ejNL2pURMH3uRbF"></div></div>
+      </section>
+
+    </div>
+  </div>
+</div></div>
+
+<!-- 通用确认弹窗（自绘，替代原生 confirm）：标题/文案/按钮由 openConfirm 动态注入 -->
+<div class="edit-modal" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+  <div class="confirm-dialog">
+    <h3 id="confirmModalTitle" style="margin:0 0 10px;color:var(--ink-1);font-size:16px;">删除确认</h3>
+    <p class="confirm-msg" id="confirmMsg"></p>
+    <div class="modal-actions">
+      <button type="button" class="ghost" id="confirmCancelBtn">取消</button>
+      <button type="button" class="danger" id="confirmOkBtn">删除</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+(function(){
+  "use strict";
+  var TRASH='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
+  // 小黑空状态插画：透明 SVG 资源，保持页面离线可用。
+  var EMPTY_SUN='<img class="empty-state-img" src="/assets/empty-state-illustrations/01-today-clear-v1.svg" alt="">';
+  var EMPTY_PLANT='<img class="empty-state-img" src="/assets/empty-state-illustrations/03-month-goals-v1.svg" alt="">';
+  var EMPTY_WEEKS='<img class="empty-state-img" src="/assets/empty-state-illustrations/09-month-weeks-v1.svg" alt="">';
+  var state={ items:[], next:[], reports:{}, okr:{}, viewWeek:"", viewMonth:"", title:"个人工作台" };
+
+  /* ---------- 结果通知：页面内 Message（顶部居中轻提示） ---------- */
+  // ⚠️ 规范（2026-09-04 定稿）：业务结果（导入成功/失败、保存成功、冲突提示等）走页面内 Message，
+  //    禁止 alert() / window.confirm() 这类原生弹框；也不依赖浏览器 Notification（需用户授权，
+  //    被拒后完全静默、用户收不到任何反馈）。多条同时出现时上下堆叠，各自 2.5s 后淡出。
+  var msgHost=null;
+  function notify(title, body, isErr){
+    if(!msgHost){
+      msgHost=document.createElement("div");
+      msgHost.className="wb-msg";
+      msgHost.setAttribute("role","status");
+      msgHost.setAttribute("aria-live","polite");
+      document.body.appendChild(msgHost);
+    }
+    var el=document.createElement("div");
+    el.className="wb-msg-item"+(isErr?" is-err":"");
+    var b=document.createElement("b"); b.textContent=title; el.appendChild(b);
+    if(body){ var s=document.createElement("span"); s.textContent=body; el.appendChild(s); }
+    msgHost.appendChild(el);
+    setTimeout(function(){
+      el.classList.add("is-out");
+      setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); },260);
+    },2500);
+  }
+
+  /* ---------- 自绘确认弹窗（替代原生 window.confirm） ---------- */
+  // openConfirm(msg, cb, title, okText)：标题与按钮文字不传时回落到删除场景默认值
+  var confirmCb=null;   // ⚠️ 仅在弹窗打开期间持有回调，关闭时置 null 防止误触发
+  function openConfirm(msg,cb,title,okText){
+    confirmCb=cb;
+    document.getElementById("confirmMsg").textContent=msg;
+    document.getElementById("confirmModalTitle").textContent=title||"删除确认";
+    document.getElementById("confirmOkBtn").textContent=okText||"删除";
+    document.getElementById("confirmModal").classList.add("open");
+    document.getElementById("confirmOkBtn").focus();
+  }
+  function closeConfirm(){
+    confirmCb=null;
+    document.getElementById("confirmModal").classList.remove("open");
+  }
+
+  var API = "/api/data";
+  var saveTimer = null;
+  var saveInFlight = false;  // ⚠️ PUT 在途标记：上一发未返回前不发第二个，避免带旧 __v 自撞 409
+  var saveAgain = false;     // 在途期间又有新改动：返回后补发一次
+  var dataLoaded = false;   // ⚠️ 防护标记：load() 成功前禁止 save()，避免服务故障时把空/示例状态 PUT 覆盖服务端
+
+  function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+  function serializeState(){
+    return { items:state.items, next:state.next, reports:state.reports,
+             okr:state.okr, viewWeek:state.viewWeek, viewMonth:state.viewMonth,
+             title:state.title||"",
+             __v:state.__v||0 };   // ⚠️ 乐观锁：提交必须带回 GET 时的版本号
+  }
+  function applyState(s){
+    state.__v = s.__v||0;   // 记录服务端版本号，提交时原样带回
+    state.items=s.items||[]; state.next=s.next||[];
+    state.reports=s.reports||{}; state.okr=s.okr||{};
+    // ⚠️ 必须先把服务端持久化的字段读回 state，否则 state 里这些值恒为初始空串，
+    //    ① viewMonth 为空会让下面的兜底每次都触发 →「刷新后永远回到默认月，手动选的月被丢弃」；
+    //    ② 本页保存时会用本地空串覆盖服务端 viewWeek → 周报工作台的周定位被清空。
+    state.viewMonth = s.viewMonth || "";
+    // viewWeek 由周报工作台页维护，本页不展示，但必须原样读回以便在 PUT 时保留。
+    state.viewWeek  = s.viewWeek  || "";
+    // 工作台名称：从数据库读取后应用到页面标题与浏览器标签页（服务端缺省时保留当前值）
+    state.title = s.title || state.title || "个人工作台";
+    var wbTitle=document.getElementById("wbTitle");
+    if(wbTitle) wbTitle.textContent=state.title;
+    document.title=state.title;
+    // 默认月份 =【本月】（当前自然月）。仅当持久化的 viewMonth 为空（首次打开/数据损坏）时兜底；
+    // 一旦用户已选择某个月份（即便该月暂无数据），一律尊重之，
+    // 保证月份切换能停留在任意“单月”，不被强行弹回有数据的月份。
+    if(!state.viewMonth) state.viewMonth = monthKey(new Date());
+    // ⚠️ 月份下限（用户要求 2026-08 为最早月份）：
+    //    ① 一次性清理早于 MIN_MONTH 的 okr 历史记录（删除后下次加载不会再出现）；
+    //    ② viewMonth 若早于 MIN_MONTH（旧数据/URL 直达）则截断到 MIN_MONTH。
+    var changed=false, purged=[];
+    for(var mk in state.okr){ if(mk<MIN_MONTH){ purged.push(mk); delete state.okr[mk]; changed=true; } }
+    if(state.viewMonth<MIN_MONTH){ state.viewMonth=MIN_MONTH; changed=true; }
+    if(changed){
+      if(purged.length) console.warn("[okr] 已清理 2026-08 之前的历史记录:", purged);
+      save();
+    }
+  }
+  function load(){
+    return fetch(API, {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(d){
+      applyState(d||{});
+      dataLoaded = true;   // 只有真实拿到服务端数据后才放行 save()
+    }).catch(function(err){
+      console.error("[api] 加载失败，服务端可能未启动", err);
+      setSaveStatus("服务未连接", true);
+      throw err;
+    });
+  }
+  function save(){
+    // ⚠️ 已静默化：保存过程不再触发右上角文字闪烁（用户偏好）
+    if(!dataLoaded) return;   // 数据从未成功加载时不允许回写，防止空状态覆盖服务端
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, 400);   // 防抖：连续操作合并为一次提交
+  }
+  function flushSave(){
+    // ⚠️ 保存请求严格串行：在途时不发新请求，等返回后补发最新状态
+    if(saveInFlight){ saveAgain=true; return; }
+    saveInFlight=true;
+    fetch(API, {method:"PUT", headers:{"Content-Type":"application/json"},
+                 body:JSON.stringify(serializeState())})
+      .then(function(r){
+        // ⚠️ 409 = 页面加载后数据已被其他页面更新（持有过期快照），强制刷新同步
+        if(r.status===409){ notify("数据已被其他页面更新","页面即将刷新以同步最新内容。",true); location.reload(); return null; }
+        return r.json();
+      })
+      .then(function(j){
+        saveInFlight=false;
+        if(!j) return;                                 // 409 已触发刷新
+        if(typeof j.__v==="number") state.__v=j.__v;   // 更新本地版本号，保证下次提交有效
+        if(saveAgain){ saveAgain=false; flushSave(); } // 在途期间又有改动：补发一次
+      })
+      .catch(function(err){
+        saveInFlight=false;
+        console.error("[api] 保存失败", err);
+        saveTimer = setTimeout(flushSave, 1500);
+      });
+  }
+  function setSaveStatus(text, isErr){
+    // ⚠️ 已静默化：右上角不再因切换月份/周/编辑而闪"保存中…"——只保留错误视觉
+    var d=document.getElementById("syncDot");
+    if(d) d.style.background = isErr ? "var(--red)" : "var(--green)";
+  }
+  // ⚠️ 前端 seed 兜底已移除（2026-09-04）：示例数据一旦被 save() 回写会覆盖服务端真实数据；
+  //    服务不可达时页面仅渲染空状态，dataLoaded=false 保证任何交互都不会落盘。
+
+  /* ---------- 计算层 ---------- */
+  var MIN_MONTH="2026-08";   // ⚠️ 月度 OKR 最早可查看月份（用户要求：8 月之前记录删除、月份不可再往前跳）
+  function monthKey(d){ return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2); }
+  function monthLabel(mk){ var p=mk.split("-"); return p[0]+"年"+Number(p[1])+"月"; }
+  function shiftMonth(mk,delta){ var p=mk.split("-"); var y=+p[0],m=+p[1]+delta; if(m<1){m=12;y--;} else if(m>12){m=1;y++;} return y+"-"+("0"+m).slice(-2); }
+  // 月份下限截断：早于 MIN_MONTH 一律拉回 MIN_MONTH（导航与加载两个入口共用）
+  function clampMonth(mk){ return mk<MIN_MONTH ? MIN_MONTH : mk; }
+  function avgProgress(o){ if(!o.krs.length) return 0; var s=0; o.krs.forEach(function(k){ s+=Number(k.progress)||0; }); return Math.round(s/o.krs.length); }
+  // 进度条配色：满 = 完成绿，其余 = 近黑。
+  // ⚠️ 不再按低/中/高分红黄蓝：大面积暖色填充会把整页色调拉黄。
+  //    返回 "var(--x)" 是安全的 —— CSS 变量在 inline style 中可用。
+  // 进度条配色：100% = 完成绿 --up；未完成 = 浅绿 --up-soft（用户要求不用近黑）
+  function barColor(p){ p=Number(p)||0; return p>=100 ? "var(--up)" : "var(--up-soft)"; }
+  function find(arr,id){ for(var i=0;i<arr.length;i++){ if(arr[i].id===id) return arr[i]; } return null; }
+
+  /* ---------- 日期工具（用于生成周报工作台入口链接） ---------- */
+  function fmt(d){ var y=d.getFullYear(),m=("0"+(d.getMonth()+1)).slice(-2),day=("0"+d.getDate()).slice(-2); return y+"-"+m+"-"+day; }
+  function parse(s){ var p=s.split("-"); return new Date(+p[0],+p[1]-1,+p[2]); }
+  function addDays(s,n){ var d=parse(s); d.setDate(d.getDate()+n); return fmt(d); }
+  function getMonday(d){ var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()); var day=x.getDay(); var diff=(day===0)?-6:(1-day); x.setDate(x.getDate()+diff); return x; }
+  function mondayStr(d){ return fmt(getMonday(d)); }
+  function weekRange(monStr){ var mon=parse(monStr); var sun=new Date(mon); sun.setDate(mon.getDate()+6); return {mon:fmt(mon),sun:fmt(sun)}; }
+  // 返回“周一落在该月”的所有周（按周一 ISO 字符串升序）
+  function monthMondays(mk){
+    var p=mk.split("-"), y=+p[0], m=+p[1], cur=new Date(y,m-1,1);
+    while(cur.getDay()!==1) cur.setDate(cur.getDate()+1);   // 推进到当月第一个周一
+    var res=[];
+    while(cur.getMonth()===(m-1)){ res.push(fmt(cur)); cur.setDate(cur.getDate()+7); }
+    return res;
+  }
+  /* ---------- 今天要处理 ---------- */
+  // ⚠️ 本模块从周报工作台页迁移而来：统计范围是 state.items 全量，
+  //    不受 viewMonth / viewWeek 影响（逾期事项跨月也必须提醒）。
+  function todayStr(){ return fmt(new Date()); }
+  function statusLabel(s){ return s==="done"?"已完成":(s==="doing"?"进行中":"待办"); }
+  // 返回未完成事项中「日期 < 今天」的逾期项与「日期 == 今天」的当日项
+  function getAlerts(){
+    var t=todayStr(), overdue=[], today=[];
+    state.items.forEach(function(it){
+      if(it.status==="done") return;
+      if(it.date<t) overdue.push(it); else if(it.date===t) today.push(it);
+    });
+    return {overdue:overdue,today:today};
+  }
+  function renderToday(){
+    var box=document.getElementById("todayList"); if(!box) return;
+    var a=getAlerts(), t=todayStr();
+    box.innerHTML="";
+    var tc=document.getElementById("todayCount");
+    if(tc) tc.textContent=(a.overdue.length+a.today.length)+" 项";   // 空态也要显示 0 项
+    if(!a.overdue.length && !a.today.length){
+      box.appendChild(el('<div class="empty-illu">'+EMPTY_SUN+'<div class="t">今天没有待处理事项，状态良好。</div></div>'));
+      return;
+    }
+    a.overdue.concat(a.today).forEach(function(it){
+      var isOverdue=it.date<t;
+      var wrap=el('<div class="alert-item '+(isOverdue?"overdue":"")+'"></div>');
+      var meta=el('<div class="meta"></div>');
+      meta.appendChild(el('<div class="t">'+esc(it.content)+'</div>'));
+      meta.appendChild(el('<div class="s">'+esc(it.project||"未分类")+' · '+statusLabel(it.status)+' · '+esc(it.date)+'</div>'));
+      wrap.appendChild(meta);
+      if(isOverdue) wrap.appendChild(el('<span class="pill">逾期</span>'));
+      var btn=el('<button class="btn-done sm">完成</button>');
+      btn.addEventListener("click",function(){ markDone(it.id); });
+      wrap.appendChild(btn);
+      box.appendChild(wrap);
+    });
+  }
+
+  // 统计“落在当月周报里的任务”，按周报归属周判断，不按任务日期所属月份判断。
+  // 例如：9 月 1 日属于 8 月 31 日开始的周报，因此不计入 9 月周报空状态。
+  function getMonthTaskCount(weeks){
+    var count=0;
+    weeks.forEach(function(wm){
+      var wr=weekRange(wm);
+      state.items.forEach(function(it){
+        if(typeof it.date==="string" && it.date>=wr.mon && it.date<=wr.sun) count++;
+      });
+    });
+    return count;
+  }
+  function renderExecCalendar(){
+    var box=document.getElementById("execCalendar"); if(!box) return;
+    // ⚠️ 月历跟随顶部的月份导航（state.viewMonth），与月度 OKR / 周报 同步切换，不再固定为自然月
+    var mk=clampMonth(state.viewMonth||monthKey(new Date()));
+    var first=parse(mk+"-01"), year=first.getFullYear(), month=first.getMonth();
+    var offset=(first.getDay()+6)%7, days=new Date(year,month+1,0).getDate();
+    var prevDays=new Date(year,month,0).getDate(), total=Math.ceil((offset+days)/7)*7;
+    var firstCell=new Date(year,month,1); firstCell.setDate(firstCell.getDate()-offset);
+    var gridStart=fmt(firstCell), gridEnd=addDays(gridStart,total-1), today=todayStr();
+    // 任务 → 连续条（2026-09-04 显示规则）：doing_at 为起点；
+    // 有 done_at 以 done_at 为终点，没有（进行中）以当前实际日期为终点；纯未完成（无起点）不上条。
+    // 颜色语义：单日（周内不连续）= 原单日片配色（完成浅绿/进行中 lime-soft）、
+    //           跨月 = 橙(--cal-xmon)、跨周 = 荧光绿（品牌主色）、周内连续 = 浅蓝(--cal-same)。
+    function monday(ds){ var d=parse(ds); var off=(d.getDay()+6)%7; d.setDate(d.getDate()-off); return fmt(d); }
+    var spans=[];
+    state.items.forEach(function(it){
+      var s=it.doingAt||"", e=it.doneAt||"";
+      if(!s||it.status==="todo") return;
+      if(e&&e<s) e=s;
+      if(!e) e=today;
+      if(e<gridStart||s>gridEnd) return;   // 与当前视图无交集
+      var cat=(s===e)?"single":((s.slice(0,7)!==e.slice(0,7))?"xmon":((monday(s)!==monday(e))?"":"same"));
+      spans.push({content:it.content||"(未命名)", start:s, end:e, cat:cat,
+                  project:it.project||"", priority:it.priority||"", status:it.status});
+    });
+    var html='<div class="cal-grid">';
+    ["一","二","三","四","五","六","日"].forEach(function(w){ html+='<div class="cal-weekday">'+w+'</div>'; });
+    for(var r=0;r<total/7;r++){
+      var rowStart=r*7, rowEnd=rowStart+6;
+      // 先算本行 7 天的日期串（车道分配与占位渲染都依赖）
+      var rowDates=[];
+      for(var i=rowStart;i<=rowEnd;i++){
+        var n=i-offset+1, date=n<1?new Date(year,month-1,prevDays+n):(n>days?new Date(year,month,n):new Date(year,month,n));
+        rowDates.push(fmt(date));
+      }
+      // 车道分配：同一任务在本行所有格子里固定占同一条「车道」——
+      // 按起始日排序后贪心装入不重叠的车道；某天某车道没任务时画透明占位片撑住高度，
+      // 保证同天多任务时各任务的水平连续性（否则段在格内按顺序堆叠会跨格串行、看起来断开）。
+      var rowSegs=[];
+      spans.forEach(function(sp){
+        var si=0, ei=6;
+        while(si<7&&rowDates[si]<sp.start) si++;
+        while(ei>=0&&rowDates[ei]>sp.end) ei--;
+        if(si>ei) return;   // 本行与该条无交集
+        rowSegs.push({sp:sp, si:si, ei:ei, lane:0});
+      });
+      rowSegs.sort(function(a,b){ return a.si-b.si || a.ei-b.ei; });
+      var laneEnd=[];   // 每条车道已被占用到的最后一天下标
+      rowSegs.forEach(function(sg){
+        for(var L=0;L<laneEnd.length;L++){
+          if(laneEnd[L]<sg.si){ sg.lane=L; laneEnd[L]=sg.ei; return; }
+        }
+        sg.lane=laneEnd.length; laneEnd.push(sg.ei);
+      });
+      html+='<div class="cal-weekrow">';
+      html+='<div class="cal-days">';
+      for(var i=rowStart;i<=rowEnd;i++){
+        var d=i-rowStart, ds=rowDates[d];
+        var n=i-offset+1, date=n<1?new Date(year,month-1,prevDays+n):(n>days?new Date(year,month,n):new Date(year,month,n));
+        var muted=n<1||n>days, today2=(ds===todayStr());
+        html+='<div class="cal-day'+(muted?' muted':'')+(today2?' today':'')+'"><div class="num">'+date.getDate()+'</div>';
+        // 逐车道渲染：有任务的画真实条段（首段带字、相连侧伸出格子无缝衔接），无任务的画透明占位片；
+        // Tooltip 翻边由「末两列统一翻边」规则自动覆盖。
+        for(var L=0;L<laneEnd.length;L++){
+          var sg=null;
+          for(var k=0;k<rowSegs.length;k++){ if(rowSegs[k].lane===L&&rowSegs[k].si<=d&&d<=rowSegs[k].ei){ sg=rowSegs[k]; break; } }
+          if(!sg){ html+='<span class="cal-seg ph"></span>'; continue; }
+          var sp=sg.sp;
+          var hasL=d>sg.si, hasR=d<sg.ei;
+          var isHead=!hasL;
+          var info='任务：'+sp.content+'\n项目：'+(sp.project||"未分类")+'\n优先级：'+(sp.priority||"未设置")
+                  +'\n区间：'+sp.start+' ~ '+sp.end+'\n状态：'+statusLabel(sp.status);
+          var label=esc(isHead?(ds===sp.start?sp.content:'↳ '+sp.content):'');
+          html+='<span class="cal-seg '+sp.cat+(sp.cat==="single"&&sp.status==="done"?' done':'')+(isHead?' head':'')+(hasL?' cont-l':'')+(hasR?' cont-r':'')+'" tabindex="0" aria-label="'+esc(info.replace(/\n/g,"，"))+'">'
+              +(label?'<span class="cal-seg-label">'+label+'</span>':'')
+              +'<span class="task-tooltip">'+esc(info).replace(/\n/g,"<br>")+'</span></span>';
+        }
+        html+='</div>';
+      }
+      html+='</div></div>';
+    }
+    box.innerHTML=html+'</div>';
+  }
+  function renderWeekLinks(){
+    var box=document.getElementById("weekLinks"); if(!box) return; box.innerHTML="";
+    var empty=document.getElementById("monthTaskEmpty"); if(empty) empty.innerHTML="";
+    var weeks=monthMondays(state.viewMonth), wc=document.getElementById("weekCount");
+    if(wc) wc.textContent=weeks.length+" 周";
+    if(!getMonthTaskCount(weeks) && empty) empty.innerHTML='<div class="empty-illu">'+EMPTY_WEEKS+'<div class="t">本月还没有任务。</div><div class="s">从上方周报入口开始记录吧。</div></div>';
+    if(!weeks.length){ box.appendChild(el('<div class="empty-illu">'+EMPTY_WEEKS+'<div class="t">本月没有可记录的周。</div></div>')); return; }
+    var curMon=mondayStr(new Date());
+    weeks.forEach(function(wm,i){
+      var wr=weekRange(wm), isCur=wm===curMon, a=el('<a class="wlink'+(isCur?' cur':'')+'" href="/week?w='+wm+'"></a>');
+      a.appendChild(el('<div class="wl-label">'+wr.mon+' ~ '+wr.sun+'</div>'));
+      a.appendChild(el('<div class="wl-range">第 '+(i+1)+' 周'+(isCur?' · 进行中':'')+'</div>'));
+      box.appendChild(a);
+    });
+  }
+
+  // 环形图配色：容器带 .card-dark 时切暗底配色，否则沿用浅底原配色。
+  // ⚠️ SVG 的 stroke/fill 属性不解析 var()，只能给字面值；明暗切换由 CSS 类名单点控制。
+  function donutPalette(svg){
+    var dark = svg && svg.closest && svg.closest(".card-dark");
+    return dark
+      ? {track:"rgba(255,255,255,.10)", done:"#7cc96a", doing:"#d4ee4e", todo:"rgba(255,255,255,.24)",
+         text:"#f7f7f2", subtext:"rgba(255,255,255,.62)"}
+      : {track:"#e4e5e5", done:"#3f7d3a", doing:"#d4ee4e", todo:"#e4e5e5",
+         text:"#1b1b14", subtext:"#75756c"};
+  }
+
+  function renderStats(){
+    var objs = state.okr[state.viewMonth] || [];
+    var completed=0, inprogress=0, notstarted=0, total=0, weighted=0;
+    objs.forEach(function(o){
+      (o.krs||[]).forEach(function(k){
+        var p=Number(k.progress)||0; total++; weighted+=p;
+        if(p>=100) completed++; else if(p>0) inprogress++; else notstarted++;
+      });
+    });
+    var svg=document.getElementById("donut"), legend=document.getElementById("legend");
+    if(!svg||!legend) return;
+    svg.innerHTML=""; legend.innerHTML="";
+    var cx=75, cy=75, r=56, sw=18, circ=2*Math.PI*r;
+    // ⚠️ stroke 是 SVG presentation attribute，不支持 var()，必须给出字面颜色；
+    //    因此卡片明暗两套配色在这里按卡片是否带 .card-dark 现场取用。
+    var PAL=donutPalette(svg);
+    // 底部轨道
+    svg.appendChild(svgEl("circle",{cx:cx,cy:cy,r:r,fill:"none",stroke:PAL.track,"stroke-width":sw}));
+    // 三段：已完成 / 进行中 / 未开始
+    var segs=[
+      {v:completed,  c:PAL.done,  label:"已完成"},
+      {v:inprogress, c:PAL.doing, label:"进行中"},
+      {v:notstarted, c:PAL.todo,  label:"未开始"}
+    ];
+    var acc=0;
+    segs.forEach(function(s){
+      if(total>0 && s.v>0){
+        var len=circ*s.v/total;
+        svg.appendChild(svgEl("circle",{
+          cx:cx, cy:cy, r:r, fill:"none", stroke:s.c, "stroke-width":sw,
+          "stroke-dasharray":len.toFixed(2)+" "+(circ-len).toFixed(2),
+          "stroke-dashoffset":(-acc).toFixed(2),
+          transform:"rotate(-90 "+cx+" "+cy+")"
+        }));
+        acc+=len;
+      }
+    });
+    // 中心：整体完成度 %（无 KR 时给出明确空态，避免只画一个空灰圈让人以为没渲染）
+    var avg = total ? Math.round(weighted/total) : 0;
+    var t1=svgEl("text",{x:cx,y:cy+2,"text-anchor":"middle","font-size":total?"31":"24","font-weight":"700",fill:PAL.text});
+    t1.textContent = total ? (avg+"%") : "暂无";
+    var t2=svgEl("text",{x:cx,y:cy+20,"text-anchor":"middle","font-size":"14",fill:PAL.subtext});
+    t2.textContent = total ? "整体完成度" : (monthLabel(state.viewMonth)+"无 KR");
+    svg.appendChild(t1); svg.appendChild(t2);
+    // 图例
+    segs.forEach(function(s){
+      var row=el('<div class="row"></div>');
+      row.appendChild(el('<span class="dot" style="background:'+s.c+'"></span>'));
+      row.appendChild(el('<span class="lab">'+s.label+'</span>'));
+      row.appendChild(el('<span class="num">'+s.v+'</span>'));
+      legend.appendChild(row);
+    });
+    var sub=el('<div class="sub">共 '+total+' 个 KR · 整体完成度 '+avg+'%</div>');
+    legend.appendChild(sub);
+  }
+
+
+  function esc(s){ return (s||"").replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+  // ⚠️ 由 HTML 字符串创建 DOM 元素。renderOKR / renderStats / renderWeekLinks 均依赖本函数，
+  //    缺失会导致首次渲染即抛 ReferenceError，表现为「列表/统计图/周链接整块空白」。
+  function el(html){ var d=document.createElement("div"); d.innerHTML=html.trim(); return d.firstChild; }
+  // 创建 SVG 元素（饼图用，需用 SVG 命名空间）
+  function svgEl(tag, attrs){
+    var e=document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for(var k in attrs){ if(attrs.hasOwnProperty(k)) e.setAttribute(k, attrs[k]); }
+    return e;
+  }
+
+  function renderMonthNav(){
+    var lb=document.getElementById("okrMonthLabel");
+    if(lb) lb.textContent=monthLabel(state.viewMonth);
+    // ⚠️ 月份下限：已到 MIN_MONTH（2026-08）时禁用「上一月」按钮（disabled 阻止点击 + 灰显）
+    Array.prototype.forEach.call(document.querySelectorAll(".mnav"),function(b){
+      b.disabled = (b.dataset.dir==="-1") && state.viewMonth<=MIN_MONTH;
+    });
+  }
+  function renderOKR(){
+    renderMonthNav();
+    var list=document.getElementById("okrList"); list.innerHTML="";
+    var objs=state.okr[state.viewMonth]||[];
+    if(!objs.length){
+      // 空态：Notion 风格盆栽插画 + 引导文案（「回到有数据的月份」入口统一由顶部提示条 #monthTip 提供）
+      list.appendChild(el('<div class="empty-illu">'+EMPTY_PLANT+'<div class="t">本月（'+monthLabel(state.viewMonth)+'）还没有目标（O）</div><div class="s">在上方添加一条，开始规划吧。</div></div>'));
+      return;
+    }
+    objs.forEach(function(o,i){
+      // ⚠️ 旧快照的 KR 可能没有 id（后端曾漏返回 id 列）：removeKR 按 id 过滤会误删整个 O 的所有 KR，
+      //    渲染时现场补一个，保存后即固化，删除/编辑从此逐条精确。
+      (o.krs||[]).forEach(function(kr){ if(!kr.id) kr.id=uid(); });
+      var card=el('<div class="obj"></div>');
+      var head=el('<div class="obj-head"></div>');
+      head.appendChild(el('<div class="obj-title"><span class="o-idx">O'+(i+1)+'</span>'+esc(o.title)+'</div>'));
+      var delO=el('<button class="iconbtn" title="删除目标">'+TRASH+'</button>');
+      delO.addEventListener("click",function(){ removeObj(o.id); });
+      head.appendChild(delO); card.appendChild(head);
+      var avg=avgProgress(o);
+      card.appendChild(el('<div class="obar"><i id="obar_'+o.id+'" style="width:'+avg+'%;background:'+barColor(avg)+'"></i></div>'));
+      card.appendChild(el('<div class="obj-pct" id="opct_'+o.id+'">总进度 '+avg+'%</div>'));
+      o.krs.forEach(function(kr,ki){
+        var krBox=el('<div class="kr"></div>');
+        var txtWrap=el('<div class="kr-textwrap"></div>');
+        // 序号标号：K1/K2/...，随增删自动重排（本函数每次全量重渲染）
+        txtWrap.appendChild(el('<span class="kr-idx">K'+(ki+1)+'</span>'));
+        // ⚠️ KR 文本改为 textarea：支持多行、行数随内容自适应（单行 <input> 长文本需横向拖拽）
+        var txt=document.createElement("textarea");
+        txt.className="kr-txt"; txt.placeholder="关键结果（KR）"; txt.rows=1; txt.value=kr.text||"";
+        txt.addEventListener("input",function(){ kr.text=this.value; autoHeight(this); save(); });
+        txtWrap.appendChild(txt);
+        var krRow=el('<div class="kr-row"></div>');
+        var rng=el('<input type="range" min="0" max="100" value="'+kr.progress+'" class="kr-rng">');
+        rng.style.setProperty("--val", kr.progress+"%");   // WebKit 进度填充：与 value 同步（Firefox 走 -moz-range-progress）
+        rng.style.setProperty("--kr-color", (Number(kr.progress)>=100?"var(--up)":"var(--up-soft)"));  // 100% 完成转深绿，其余浅绿
+        var pct=el('<span class="kr-pct">'+kr.progress+'%</span>');
+        var delK=el('<button class="iconbtn" title="删除KR">'+TRASH+'</button>');
+        krRow.appendChild(rng); krRow.appendChild(pct); krRow.appendChild(delK);
+        rng.addEventListener("input",function(){
+          kr.progress=Number(this.value); pct.textContent=kr.progress+"%";
+          this.style.setProperty("--val", this.value+"%");  // 拖动时同步渐变分割点
+          this.style.setProperty("--kr-color", (Number(this.value)>=100?"var(--up)":"var(--up-soft)"));  // 达 100% 转深绿，其余浅绿
+          var a=avgProgress(o);
+          var bar=document.getElementById("obar_"+o.id); if(bar){ bar.style.width=a+"%"; bar.style.background=barColor(a); }
+          var op=document.getElementById("opct_"+o.id); if(op) op.textContent="总进度 "+a+"%";
+          save();
+          renderStats();   // KR 进度变化会影响统计饼图
+        });
+        delK.addEventListener("click",function(){ removeKR(o.id,kr.id); });
+        krBox.appendChild(txtWrap); krBox.appendChild(krRow);
+        card.appendChild(krBox);
+      });
+      var addKr=el('<div class="kr-add"></div>');
+      var ki=el('<input class="kr-txt" id="krin_'+o.id+'" placeholder="新增关键结果（KR）">');
+      var kb=el('<button class="sm">添加 KR</button>');
+      kb.addEventListener("click",function(){
+        var v=document.getElementById("krin_"+o.id).value.trim(); if(!v) return; addKR(o.id,v);
+      });
+      addKr.appendChild(ki); addKr.appendChild(kb); card.appendChild(addKr);
+      list.appendChild(card);
+    });
+  }
+
+  function refreshAll(){ renderToday(); renderOKR(); renderStats(); renderWeekLinks(); renderExecCalendar(); autoHeightAll(); }
+
+  // KR 文本 textarea 自适应高度：配合 CSS `resize:none; overflow:hidden`，
+  // 先归零高度再按 scrollHeight 重设 -> 行数随内容增减，无需横向滚动。需在元素入 DOM 后调用。
+  function autoHeight(t){ if(!t) return; t.style.height="auto"; t.style.height=(t.scrollHeight)+"px"; }
+  function autoHeightAll(){
+    var list=document.getElementById("okrList"); if(!list) return;
+    Array.prototype.forEach.call(list.querySelectorAll("textarea.kr-txt"), autoHeight);
+  }
+
+  // 「今天要处理」点完成：直接把事项置为 done 并落盘（与周报工作台页共用同一份 state.items）
+  function markDone(id){ var it=find(state.items,id); if(it){ it.status="done"; save(); refreshAll(); } }
+
+  function removeObj(id){ openConfirm("确定删除该目标（O）及其下所有 KR 吗？此操作不可撤销。", function(){ state.okr[state.viewMonth]=state.okr[state.viewMonth].filter(function(x){return x.id!==id;}); save(); refreshAll(); }); }
+  function addKR(oid,text){ var o=find(state.okr[state.viewMonth],oid); if(o){ o.krs.push({id:uid(),text:text,progress:0}); save(); refreshAll(); } }
+  function removeKR(oid,kid){ openConfirm("确定删除该 KR 吗？此操作不可撤销。", function(){ var o=find(state.okr[state.viewMonth],oid); if(o){ o.krs=o.krs.filter(function(k){return k.id!==kid;}); save(); refreshAll(); } }); }
+
+  function bind(){
+    document.getElementById("okrForm").addEventListener("submit",function(e){
+      e.preventDefault();
+      var t=document.getElementById("oTitle").value.trim(); if(!t) return;
+      if(!state.okr[state.viewMonth]) state.okr[state.viewMonth]=[];
+      state.okr[state.viewMonth].push({id:uid(),title:t,krs:[]});
+      save(); refreshAll();
+      document.getElementById("oTitle").value="";
+    });
+    // 删除确认弹窗（自绘）：确认执行回调 / 取消、点遮罩、Esc 关闭
+    document.getElementById("confirmOkBtn").addEventListener("click",function(){
+      var cb=confirmCb; closeConfirm(); if(cb) cb();
+    });
+    document.getElementById("confirmCancelBtn").addEventListener("click",closeConfirm);
+    document.getElementById("confirmModal").addEventListener("click",function(e){
+      if(e.target===this) closeConfirm();
+    });
+    document.addEventListener("keydown",function(e){
+      if(e.key==="Escape") closeConfirm();
+    });
+    // ⚠️ 月份切换防重复：若同一个 click 事件被派发多次（例如监听器被意外重复绑定），
+    //    一次点击会跳两个月（表现为「8月往前是6月、9月往前是7月」）。
+    //    这里用「事件对象身份」去重：同一事件对象的重复调用直接忽略，保证一次点击只挪一个月。
+    var lastNavEvt = null;
+    Array.prototype.forEach.call(document.querySelectorAll(".mnav"),function(b){
+      b.addEventListener("click",function(e){
+        // ① 同一 click 事件对象被重复派发（同一闭包内监听器重复绑定）-> 忽略
+        if(e && e===lastNavEvt) return;
+        // ② 极短时间内的重复触发也忽略；挂在 window 上可在多份脚本实例间共享
+        var now=Date.now(), last=window.__lastNavAt||0;
+        if(now-last<120) return;
+        lastNavEvt = e || null;
+        window.__lastNavAt = now;
+        state.viewMonth=shiftMonth(state.viewMonth,Number(this.dataset.dir));
+        // ⚠️ 月份下限：不允许跳到 2026-08 之前（到 MIN_MONTH 时上一月按钮已禁用，此处再兜底一次）
+        if(state.viewMonth<MIN_MONTH) state.viewMonth=MIN_MONTH;
+        // ⚠️ 同步周定位：月份导航要同时驱动周报模块，viewWeek 跟随落到该月第一个周一，
+        // 否则 viewWeek 永远停在旧月份（周报页只能在月内切周，出不了那个月）
+        var mws=monthMondays(state.viewMonth);
+        if(mws.length) state.viewWeek=mws[0];
+        save(); refreshAll();
+      });
+    });
+    document.getElementById("okrMonthTodayBtn").addEventListener("click",function(){
+    state.viewMonth=monthKey(new Date());
+    var mws=monthMondays(state.viewMonth);
+    if(mws.length) state.viewWeek=mws[0];   // 「本月」同样把周定位带回当月第一周
+    save(); refreshAll();
+  });
+  }
+
+  function updateSyncBadge(){
+    var t=document.getElementById("syncText"), d=document.getElementById("syncDot"), b=document.getElementById("syncBadge");
+    if(t) t.textContent="服务已连接 · 持久化";
+    if(d) d.style.background="var(--green)";
+    if(b){ b.classList.remove("is-err"); b.title="数据由后端服务持久化到 SQLite（weekly.db），重启不丢"; }
+  }
+  function init(){
+    updateSyncBadge();
+    // 顶栏日期：显示真实今天（与「今天要处理」呼应，不随 OKR 月份切换而变）
+    var hd=document.getElementById("hdrDate");
+    if(hd){ var WD=["周日","周一","周二","周三","周四","周五","周六"], d=new Date();
+            hd.textContent=todayStr()+" "+WD[d.getDay()]; }
+    load().then(function(){ bind(); refreshAll(); })
+          .catch(function(){ bind(); refreshAll(); });   // ⚠️ 不 seed 不回写：避免空/示例数据覆盖服务端
+  }
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init); else init();
+})();
+</script>
+</body>
+</html>

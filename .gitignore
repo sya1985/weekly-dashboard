@@ -1,0 +1,15 @@
+# ⚠️ 数据文件含真实工作记录，切勿入库
+#    首次启动会自动建库并播种示例数据，所以 data/ 的内容不需要提交
+data/*
+!data/.gitkeep
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+
+# 本地工具、备份与工作记忆（WorkBuddy 工作区元数据）
+.workbuddy/

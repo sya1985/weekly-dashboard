@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<!-- 本工作台为单文件 HTML，符合 workspace-builder 专家规范：全内联、零外链 -->
+<!-- 数据由后端 server.py 持久化到 SQLite（weekly.db），前端通过 /api/data 读写，无 localStorage -->
+<!-- 界面风格：仿 Notion -->
+<html lang="zh-CN" data-page-node-id="0DqX3Xh8fVt76vFtYDsFm2">
+<head data-page-node-id="B0eEeukZJkL6xNKWJLB61A">
+<meta charset="UTF-8" data-page-node-id="Hv0xK9YfpSYgjgjBlbalmX">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" data-page-node-id="NmFIEEK3w432CoU4oqd69h">
+<title>周报</title>
+<style>
+
+/* =================================================================
+   周报工作台
+   骨架：浮动面板（与首页 月度OKR 同一套）—— 整块圆角白面板浮在中性浅灰纸上，
+        无左侧主菜单，只有顶栏品牌 + 状态胶囊 + 周切换
+   栅格：week-grid —— 主栏 a（KPI + 三列看板）/ 主栏 b（本周周报编辑区）
+        + 侧栏 c（下周计划，窄版竖排表单）
+   主色：荧光黄绿 #d4ee4e（只做"点"，不铺面）+ 近黑 #1b1b14（进度 / 强调）
+   语义：绿 = 完成，琥珀 = 进行中 / 临期，红 = 逾期，日期类文字一律中性灰
+   ================================================================= */
+
+/* ---------------- 设计 token ---------------- */
+:root{
+  /* 中性灰阶：不带黄、不带青 */
+  --page:#e7e8e8;            /* 页面底：浅灰 */
+  --bg:#ffffff;              /* 浮动面板 / 卡片 */
+  --panel-2:#f2f3f3;         /* 次级块（列表底、输入、看板列） */
+  --panel-3:#e4e5e5;         /* 更深的次级（chip 底、标签底） */
+  --border:rgba(27,27,20,.09);
+  --border-2:rgba(27,27,20,.18);
+  --ink-1:#1b1b14; --ink-2:#3d3d36; --ink-3:#75756c; --ink-4:#a8a89e;
+
+  /* 主色：荧光黄绿只做"点"，近黑做第二主色 */
+  --lime:#d4ee4e;
+  --lime-soft:rgba(212,238,78,.34);
+  --accent:#5c7c0a;          /* 文字级绿，保证对比度 */
+  --accent-soft:rgba(92,124,10,.10);
+  --accent-2:#1b1b14;        /* 近黑：按钮 / 进度 / 强调 */
+  --glow:rgba(212,238,78,.20);
+
+  /* 语义色 */
+  --up:#3f7d3a;              /* 完成 = 绿 */
+  --down:#c0453c;            /* 逾期 / 风险 = 红 */
+  --warn:#b06a1c;            /* 进行中 / 临期 = 琥珀 */
+
+  --r:20px; --r-sm:12px; --r-lg:32px;
+  --shadow:0 1px 3px rgba(27,27,20,.05);
+  --shadow-lg:0 40px 90px -50px rgba(27,27,20,.36);
+
+  /* ---------------- 兼容旧变量名 ----------------
+     ⚠️ 必须保留：JS 的 setSaveStatus()/updateSyncBadge() 用 var(--red)/var(--green)，
+     renderStats() 的 .stat.amber 用 var(--amber-tx)。删掉别名这些地方会变成透明。 */
+  --text:var(--ink-1); --muted:var(--ink-3); --faint:var(--ink-4);
+  --hover:var(--panel-2); --hover2:var(--panel-3);
+  --line:var(--border); --line2:var(--border-2);
+  --red:var(--down); --green:var(--up); --amber:var(--warn);
+  --radius:12px;
+  --red-bg:rgba(192,69,60,.11);    --red-tx:var(--down);
+  --green-bg:rgba(63,125,58,.12);  --green-tx:var(--up);
+  --amber-bg:rgba(176,106,28,.12); --amber-tx:var(--warn);
+  --blue-bg:var(--accent-soft);    --blue-tx:var(--accent);
+  --gray-bg:var(--panel-3);        --gray-tx:var(--ink-3);
+}
+
+/* ---------------- 基础 ---------------- */
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0; padding:0;}
+/* ⚠️ 用 clip 不用 hidden：hidden 会让元素变成滚动容器，静默破坏 sticky 顶栏 */
+html{overflow-x:clip;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  background:var(--page); color:var(--ink-2); font-size:15px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:calc(40px + env(safe-area-inset-bottom));
+}
+
+/* ---------------- 浮动面板骨架 ---------------- */
+.wb{padding:26px 26px 46px;}
+.shell{
+  position:relative; max-width:1240px; margin:0 auto;
+  background:var(--bg); border-radius:var(--r-lg);
+  padding:0 34px 40px; box-shadow:var(--shadow-lg);
+}
+/* 角落品牌辉光：每屏一次。
+   ⚠️ 不用 .shell{overflow:hidden} 来裁圆角 —— 那会让 sticky 顶栏失效，
+   改为给辉光自身加右上圆角，并让它完全落在面板内。 */
+.shell::before{
+  content:""; position:absolute; top:0; right:0; width:420px; height:300px;
+  background:radial-gradient(closest-side at 82% 12%, var(--glow), transparent 72%);
+  border-radius:0 var(--r-lg) 0 0; pointer-events:none; z-index:0;
+}
+.shell > *{position:relative; z-index:1;}
+
+/* ---------------- 顶栏（sticky，无主菜单） ---------------- */
+.topbar{
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  margin:0 -34px; padding:22px 34px 18px;
+  background:var(--bg); border-radius:var(--r-lg) var(--r-lg) 0 0;
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex; align-items:center; flex-wrap:wrap; gap:12px; min-width:0;}
+.brand h1{font-size:23px; font-weight:780; letter-spacing:-.02em; margin:0; color:var(--ink-1);}
+.brand .date{font-size:13px; color:var(--ink-3); font-variant-numeric:tabular-nums;}
+.brand .mark{display:inline-block; width:11px; height:11px; background:var(--lime);
+  border-radius:3px; transform:rotate(45deg); margin-right:7px; vertical-align:middle;}
+.topbar .acts{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+
+.status{display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ink-3);
+  background:var(--panel-2); padding:6px 13px; border-radius:999px;}
+.status .dot{width:7px; height:7px; border-radius:50%; background:var(--up);}
+.status.is-err .dot{background:var(--down);}
+.status.is-err{color:var(--down);}
+
+.hintlink{display:inline-flex; align-items:center; gap:5px; color:var(--accent);
+  font-size:13px; font-weight:640; text-decoration:none;}
+.hintlink:hover{text-decoration:underline;}
+
+/* 周切换（brand 内胶囊）：固定 32px 高，避免随内容浮动 */
+.wk-nav{display:inline-flex; align-items:center; gap:4px; height:32px; background:var(--panel-2);
+  padding:3px; border-radius:999px; box-sizing:border-box;}
+.wk-nav .iconbtn{border-radius:999px;}
+.wk-nav .iconbtn:hover{background:var(--bg); color:var(--ink-1);}
+
+/* ---------------- 栅格：主栏 + 侧栏 ---------------- */
+.grid{display:grid; gap:18px; align-items:start; margin-top:18px;}
+/* ⚠️ 主栏必须是 minmax(0,1fr)：裸 1fr 的最小尺寸是 auto，长内容会把列撑破 */
+.week-grid{grid-template-columns:minmax(0,1fr) 336px; grid-template-areas:"a c" "b c";}
+.col-wa{grid-area:a;} .col-wb{grid-area:b;} .col-wc{grid-area:c;}
+.col{display:grid; gap:18px; align-content:start; min-width:0;}
+
+/* ---------------- 卡片 ---------------- */
+.card{background:var(--bg); border-radius:var(--r); padding:20px 22px;
+  border:1px solid var(--border); box-shadow:var(--shadow); min-width:0;}
+.card-h{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:15px;}
+.card-h h2{font-size:15.5px; font-weight:700; letter-spacing:-.01em; margin:0; color:var(--ink-1);
+  display:flex; align-items:center; gap:9px;}
+.card-h h2 .ic{width:26px; height:26px; border-radius:8px; background:var(--accent-soft);
+  color:var(--accent); display:inline-flex; align-items:center; justify-content:center;
+  font-size:13px; flex:0 0 auto;}
+.card-h h2 .ic svg{width:15px; height:15px; display:block;}
+.card-h .meta{font-size:12px; color:var(--ink-3); font-variant-numeric:tabular-nums;}
+.hint{font-size:12.5px; color:var(--ink-3); margin:-6px 0 14px; line-height:1.6;}
+
+/* ---------------- 按钮 ---------------- */
+button{font-size:13px; font-family:inherit; cursor:pointer; border:1px solid var(--border);
+  border-radius:10px; padding:7px 14px; min-height:34px; background:var(--bg); color:var(--ink-2);
+  font-weight:620; display:inline-flex; align-items:center; gap:6px; justify-content:center;
+  transition:background .12s, border-color .12s;}
+button:hover{background:var(--panel-2);}
+button:active{background:var(--panel-3);}
+button.sm{min-height:30px; padding:5px 11px; font-size:12.5px;}
+button.ghost{background:transparent; border-color:var(--border);}
+button.ghost:hover{background:var(--panel-2);}
+button.primary{background:var(--accent-2); color:#fff; border-color:transparent;
+  box-shadow:0 8px 22px -10px rgba(27,27,20,.5);}
+button.primary:hover{background:#000;}
+button:disabled{opacity:.4; cursor:not-allowed; box-shadow:none;}
+button:disabled:hover{background:var(--accent-2); filter:none;}   /* 禁用态悬停不变色 */
+
+.iconbtn{width:28px; height:28px; padding:0; background:transparent; color:var(--ink-4);
+  border:none; border-radius:8px; cursor:pointer; display:inline-flex;
+  align-items:center; justify-content:center;}
+.iconbtn:hover{background:var(--panel-2); color:var(--down);}
+/* 键盘焦点可见：Tab 导航时给出明确焦点环 */
+button:focus-visible,.rte-btn:focus-visible,.iconbtn:focus-visible,.kstatus:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+/* ---------------- 表单 ---------------- */
+form.row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+input,select,textarea{font-size:13.5px; font-family:inherit; color:var(--ink-1);
+  background:var(--panel-2); border:1px solid transparent; border-radius:10px;
+  padding:9px 12px; outline:none; width:100%;}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft); background:var(--bg);}
+input::placeholder,textarea::placeholder{color:var(--ink-4);}
+/* 原生控件主题色：checkbox/下拉等原生部件的高亮色（date 输入框已全部换自绘选择器，见 .dp 区块） */
+input,select,textarea{accent-color:var(--accent-2);}
+input.flex1{flex:1 1 190px; min-width:0; width:auto;}
+input.w120{flex:0 1 150px; width:auto;}
+
+/* ---------------- 自绘日期选择器（2026-09-05） ----------------
+   ⚠️ 原生 <input type="date"> 的弹层由浏览器绘制，布局无法定制（accent-color 只能改色）。
+      故改为「text + readonly 输入框 + 自绘浮层 .dp」彻底接管选日期交互：
+      readonly 让原生弹层永不弹出，点击由 JS 打开自绘浮层。
+   ⚠️ 层级 1100：压过弹窗（1000），低于 Message（1200）——editDate 在 editModal 里，必须比弹窗高。 */
+input.dp-input{cursor:pointer;}
+input.dp-input:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+.dp{position:fixed; z-index:1100; width:252px; padding:12px; box-sizing:border-box;
+  background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm);
+  box-shadow:var(--shadow-lg); user-select:none;}
+.dp[hidden]{display:none;}
+.dp-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;}
+.dp-title{font-size:13.5px; font-weight:700; color:var(--ink-1); font-variant-numeric:tabular-nums;}
+/* ⚠️ 以下按钮都需覆盖 button 基础样式（border/padding/min-height:34px） */
+.dp-nav{width:26px; height:26px; min-height:0; padding:0; border:none; border-radius:7px;
+  background:transparent; color:var(--ink-2); display:grid; place-items:center;}
+.dp-nav:hover{background:var(--panel-2); color:var(--ink-1);}
+.dp-nav:focus-visible{outline:2px solid var(--lime); outline-offset:1px;}
+.dp-week,.dp-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:2px;}
+.dp-week span{font-size:10.5px; color:var(--ink-4); text-align:center; padding:4px 0;}
+.dp-day{height:30px; min-height:0; padding:0; border:none; border-radius:8px; background:transparent;
+  color:var(--ink-2); font-size:12.5px; font-weight:500; display:grid; place-items:center;
+  font-variant-numeric:tabular-nums;}
+.dp-day:hover{background:var(--panel-2); color:var(--ink-1);}
+.dp-day.muted{color:var(--ink-4);}
+.dp-day.today{color:var(--accent); font-weight:700; background:var(--accent-soft);}
+/* 选中：荧光绿实心块 + 近黑字（荧光绿底配白字对比度不足，故用 --ink-1） */
+.dp-day.sel{background:var(--lime); color:var(--ink-1); font-weight:700;}
+.dp-day.sel:hover{background:var(--lime); filter:brightness(.97);}
+.dp-day:focus-visible{outline:2px solid var(--lime); outline-offset:1px;}
+.dp-foot{display:flex; justify-content:space-between; margin-top:10px; padding-top:9px;
+  border-top:1px solid var(--border);}
+.dp-foot button{min-height:0; padding:3px 8px; border:none; border-radius:6px;
+  background:transparent; color:var(--ink-3); font-size:12px; font-weight:500;}
+.dp-foot button:hover{background:var(--panel-2);}
+.dp-foot .dp-today{color:var(--accent); font-weight:620;}
+
+/* ---------------- 自绘下拉选择器（2026-09-05） ----------------
+   ⚠️ 原生 <select> 展开后的 option 列表由浏览器绘制，圆角、荧光绿选中块全都改不了。
+      方案与日期选择器一致：原生 select 只保留「值 + required 校验」并自绘成输入框外观，
+      mousedown 里 preventDefault 阻断原生弹层，真正的选项列表交给自绘浮层 #selectPicker。
+      好处：sel.value / change 事件 / 表单必填校验全部照旧，现有业务代码零改动。
+   ⚠️ 层级与日期选择器同为 1100：压过弹窗（1000），低于 Message（1200）。 */
+select.cs-sel{appearance:none; -webkit-appearance:none; -moz-appearance:none;
+  cursor:pointer; text-overflow:ellipsis; padding-right:30px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2375756c' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 10px center; background-size:14px 14px;}
+select.cs-sel.is-open{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); background-color:var(--bg);}
+/* 占位项（如「等级」）未选真实值时用浅灰文字，与真实选项区分 */
+select.cs-sel.is-placeholder{color:var(--ink-4);}
+.cs{position:fixed; z-index:1100; padding:6px; box-sizing:border-box;
+  background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm);
+  box-shadow:var(--shadow-lg); user-select:none;}
+.cs[hidden]{display:none;}
+/* ⚠️ 需覆盖 button 基础样式（border / padding / min-height:34px） */
+.cs-opt{display:flex; align-items:center; justify-content:space-between; gap:10px;
+  width:100%; min-height:0; padding:7px 10px; border:none; border-radius:8px;
+  background:transparent; color:var(--ink-2); font-size:13px; font-weight:500;
+  font-family:inherit; line-height:1.3; text-align:left; cursor:pointer;}
+.cs-opt:hover{background:var(--panel-2); color:var(--ink-1);}
+/* 键盘上下键高亮：与 hover 同底，选中态（.sel）优先级更高，仍是荧光绿 */
+.cs-opt.is-active{background:var(--panel-2); color:var(--ink-1);}
+/* 选中：荧光绿实心 + 近黑字，与 .dp-day.sel 同一套 */
+.cs-opt.sel{background:var(--lime); color:var(--ink-1); font-weight:700;}
+.cs-opt.sel:hover{background:var(--lime); filter:brightness(.97);}
+.cs-opt:focus-visible{outline:2px solid var(--lime); outline-offset:1px;}
+/* 勾选图标：只在选中项显形，占位宽度固定避免选项文字左右跳动 */
+.cs-opt .cs-tick{width:14px; height:14px; flex:0 0 14px; opacity:0;}
+.cs-opt.sel .cs-tick{opacity:1;}
+
+/* ---------------- KPI ---------------- */
+.stats{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:16px;}
+.stat{background:var(--panel-2); border:1px solid var(--border); border-radius:var(--r);
+  padding:14px 16px; min-width:0;}
+.stat .num{font-size:26px; font-weight:780; color:var(--ink-1); letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; line-height:1.1;}
+.stat .lab{font-size:11.5px; color:var(--ink-3); margin-top:3px; font-weight:620; letter-spacing:.03em;}
+.stat.green .num{color:var(--up);}
+.stat.amber .num{color:var(--warn);}
+
+/* ---------------- 看板：本周工作三列 ---------------- */
+.kanban{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+.kcol{background:var(--panel-2); border-radius:var(--r); padding:12px;
+  min-height:190px; display:flex; flex-direction:column; min-width:0;}
+.khead{display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:0 3px 10px; font-size:13px; font-weight:700; color:var(--ink-1);}
+.kcount{font-size:11px; font-weight:680; color:var(--ink-3); background:var(--bg);
+  padding:1px 8px; border-radius:999px;}
+.kbody{display:flex; flex-direction:column; gap:9px; flex:1;
+  /* ⚠️ 任务过多时限高滚动：列头固定可见，卡片区域独立出滚动条 */
+  max-height:420px; overflow-y:auto; overscroll-behavior:contain;
+  /* ⚠️ 必须留这条 8px 走线：滚动条画在 padding 之外，padding-right 为 0 时
+     thumb 会紧贴卡片右缘，视觉上像压在卡片上（2026-09-05 用户反馈）。
+     留 8px 后「卡片右缘 → 8px 空白 → 滚动条」，与滚动条同宽，间隙稳定。 */
+  padding-right:8px;
+  border-radius:var(--r-sm); transition:background .12s;}
+.kbody.dragover{background:var(--lime-soft);}
+/* 细滚动条：贴合面板风格，避免默认粗滚动条破坏视觉
+   ⚠️ 看板列(.kbody) 与周报编辑区(.editor) 共用同一套（2026-09-05 用户要求一致），
+      改这里就是改两处；新增可滚动区域请直接往选择器里加，别另起一套。 */
+/* 编辑区是 overflow:auto（宽图会出横向条），故 height 一并定死，与纵向宽度同为 8px */
+.kbody::-webkit-scrollbar, .editor::-webkit-scrollbar{width:8px; height:8px;}
+.kbody::-webkit-scrollbar-thumb, .editor::-webkit-scrollbar-thumb{background:var(--border); border-radius:4px;}
+.kbody::-webkit-scrollbar-thumb:hover, .editor::-webkit-scrollbar-thumb:hover{background:var(--ink-4);}
+.kbody::-webkit-scrollbar-track, .editor::-webkit-scrollbar-track{background:transparent;}
+.kcard{background:var(--bg); border:1px solid var(--border); border-radius:var(--r-sm);
+  padding:11px 12px; box-shadow:var(--shadow); cursor:grab; min-width:0;}
+.kcard:active{cursor:grabbing;}
+.kcard .ct{font-size:12.8px; color:var(--ink-1); line-height:1.55; font-weight:560;
+  word-break:break-word;}
+/* 已完成态：浅色卡片 + 灰化删除线标题（原始设计）。
+   ⚠️ 2026-09-05 曾试验过「整卡暗色」（近黑 → 深灰），用户两版都不满意，已还原。
+      若日后重提暗色，注意内部标签/下拉/日期都要反色适配，别只换底色。 */
+.kcard.done .ct{color:var(--ink-3); text-decoration:line-through; text-decoration-color:var(--ink-4);}
+.kcard .sub{display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; align-items:center;}
+.kcard .sub > span:not(.tag){font-size:11px; color:var(--ink-3); font-variant-numeric:tabular-nums;}
+.kcard .kfoot{display:flex; align-items:center; justify-content:space-between;
+  margin-top:9px; gap:8px;}
+.kstatus{font-size:11.5px; font-family:inherit; border:1px solid var(--border);
+  border-radius:8px; background:var(--panel-2); padding:3px 7px; color:var(--ink-3);
+  cursor:pointer; outline:none; width:auto;}
+.kstatus:focus{border-color:var(--accent);}
+.kcard .act{display:flex; gap:2px; opacity:0; transition:opacity .12s;}
+.kcard:hover .act{opacity:1;}
+
+/* ---------------- 标签 ---------------- */
+.tag{font-size:11px; font-weight:660; padding:2px 8px; border-radius:6px;
+  background:var(--panel-3); color:var(--ink-3); letter-spacing:.02em;
+  white-space:nowrap; line-height:1.6;}
+.tag.p0{background:rgba(192,69,60,.11); color:var(--down);}
+.tag.p1{background:var(--accent-soft); color:var(--accent);}
+.tag.p2{background:var(--panel-3); color:var(--ink-3);}
+.tag.proj{background:var(--panel-3); color:var(--ink-3);}
+
+/* ---------------- 下周计划（侧栏窄版） ---------------- */
+.nwr{font-size:12px; color:var(--ink-3); margin:0 0 12px; font-variant-numeric:tabular-nums;}
+.nform{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px;}
+.nform .wide{grid-column:1 / -1;}
+.nform .btnrow{grid-column:1 / -1;}
+.nform .btnrow button{width:100%;}
+.nlist{display:flex; flex-direction:column; gap:8px;}
+.nlist .item{display:grid; grid-template-columns:1fr auto; align-items:start; gap:3px 8px;
+  padding:11px 12px; border-radius:var(--r-sm); background:var(--panel-2);}
+.nlist .item .body{grid-column:1; grid-row:1; min-width:0;}
+.nlist .item .ct{font-size:12.8px; color:var(--ink-1); line-height:1.55; word-break:break-word;}
+.nlist .item .sub{grid-column:1; grid-row:2; display:flex; gap:5px; flex-wrap:wrap;
+  align-items:center; margin-top:4px;}
+.nlist .item .sub > span:not(.tag){font-size:11px; color:var(--ink-3);
+  font-variant-numeric:tabular-nums;}
+.nlist .item .act{grid-column:2; grid-row:1; display:flex; gap:2px;
+  opacity:0; transition:opacity .12s;}
+.nlist .item:hover .act{opacity:1;}
+
+/* ---------------- 富文本编辑区 ---------------- */
+.toolbar{display:flex; gap:9px; flex-wrap:wrap; margin-bottom:12px; align-items:center;}
+.toolbar .footnote{font-size:12px; color:var(--ink-3);}
+.rte{border:1px solid var(--border); border-radius:var(--r); overflow:hidden;
+  background:var(--bg); box-shadow:var(--shadow);}
+.rte-bar{display:flex; flex-wrap:wrap; gap:2px; padding:7px 9px;
+  border-bottom:1px solid var(--border); background:var(--panel-2);}
+.rte-btn{min-height:28px; padding:4px 9px; font-size:12.5px; font-weight:600;
+  background:transparent; color:var(--ink-3); border:1px solid transparent; border-radius:8px;
+  cursor:pointer; display:inline-flex; align-items:center; justify-content:center;}
+.rte-btn:hover{background:var(--bg); color:var(--ink-1);}
+/* ---------------- 周报只读态 / 编辑态 ---------------- */
+/* ⚠️ 规范（2026-09-04）：周报默认只读，点「编辑」才进入可编辑。
+   只读态底色转浅灰 + 光标默认（明确不可改），编辑态恢复白底与文本光标。 */
+.editor[contenteditable="false"]{background:var(--panel-2); cursor:default;}
+.editor.is-editing{background:var(--bg); cursor:text;}
+/* 只读态下富文本工具栏整体置灰并失效，避免点了按钮没反应 */
+.rte-bar.is-disabled{opacity:.4; pointer-events:none;}
+.editor{min-height:300px; max-height:800px; overflow:auto; padding:22px 26px; outline:none;
+  font-size:13.5px; line-height:1.9; color:var(--ink-2);}
+.editor:empty:before{content:attr(data-ph); color:var(--ink-4);}
+.editor h3{font-size:15px; margin:0 0 12px; font-weight:730; color:var(--ink-1); letter-spacing:-.01em;}
+.editor p{margin:0 0 9px;}
+.editor strong{color:var(--ink-1); font-weight:680;}
+.editor ul,.editor ol{margin:0 0 9px; padding-left:20px;}
+.editor li{margin-bottom:3px;}
+.editor a{color:var(--accent); text-decoration:underline; word-break:break-all; cursor:pointer;}
+.editor blockquote{border-left:3px solid var(--accent); margin:9px 0; padding:4px 14px;
+  color:var(--ink-3); background:var(--accent-soft); border-radius:0 var(--r-sm) var(--r-sm) 0;}
+.editor pre{background:var(--panel-2); border:1px solid var(--border); border-radius:var(--r-sm);
+  padding:11px 13px; font-family:Consolas,Menlo,monospace; font-size:12.5px; line-height:1.7;
+  overflow-x:auto; white-space:pre-wrap; word-break:break-all; margin:9px 0;}
+/* cursor:pointer 提示可点击放大；高亮段统一用软荧光绿 */
+.editor img{max-width:100%; border-radius:var(--r-sm); margin:8px auto; display:block; cursor:pointer;}
+.editor [style*="background-color"]{color:var(--ink-1);}
+
+/* ---------------- 图片放大灯箱（z-index 必须高于 sticky 顶栏的 20） ---------------- */
+.lightbox{position:fixed; inset:0; z-index:999; background:rgba(27,27,20,.82);
+  display:none; align-items:center; justify-content:center; cursor:zoom-out;}
+.lightbox.open{display:flex;}
+.lightbox img{max-width:90vw; max-height:88vh; border-radius:14px;
+  box-shadow:0 10px 60px rgba(0,0,0,.55); background:#fff; cursor:zoom-out;}
+
+/* ---------------- 任务编辑弹窗 ---------------- */
+.edit-modal{position:fixed; inset:0; z-index:1000; display:none; align-items:center; justify-content:center;
+  padding:20px; background:rgba(27,27,20,.42);}
+.edit-modal.open{display:flex;}
+.edit-dialog{width:min(100%,460px); background:var(--bg); border:1px solid var(--border);
+  border-radius:var(--r); box-shadow:0 24px 70px rgba(27,27,20,.24); padding:22px;}
+.edit-dialog .modal-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px;}
+.edit-dialog h3{margin:0; color:var(--ink-1); font-size:16px;}
+.edit-form{display:grid; gap:12px;}
+.edit-form label{display:grid; gap:5px; color:var(--ink-2); font-size:12.5px; font-weight:650;}
+.edit-form .edit-row{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+.edit-form .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:4px;}
+@media (max-width:480px){.edit-dialog{padding:18px;}.edit-form .edit-row{grid-template-columns:1fr;}}
+
+/* ---------------- 删除确认弹窗（自绘，替代原生 confirm） ---------------- */
+/* 复用 .edit-modal 的遮罩与居中逻辑，仅收窄对话框宽度并加危险色按钮 */
+.confirm-dialog{width:min(100%,380px); background:var(--bg); border:1px solid var(--border);
+  border-radius:var(--r); box-shadow:0 24px 70px rgba(27,27,20,.24); padding:22px;}
+.confirm-dialog .confirm-msg{margin:0 0 18px; color:var(--ink-1); font-size:14px; line-height:1.7;
+  overflow-wrap:anywhere;}
+.confirm-dialog .modal-actions{display:flex; justify-content:flex-end; gap:8px;}
+button.danger{background:var(--down); color:#fff; border-color:transparent;}
+button.danger:hover{filter:brightness(.94);}
+
+/* ---------------- 插入链接弹窗（自绘，替代原生 prompt） ---------------- */
+/* 复用 .confirm-dialog 骨架，中部插入一个 URL 输入框 */
+.confirm-dialog .link-input{display:block; width:100%; box-sizing:border-box; padding:9px 11px;
+  margin:0 0 18px; border:1px solid var(--border); border-radius:8px; background:var(--bg);
+  color:var(--ink-1); font:inherit; font-size:13.5px;}
+.confirm-dialog .link-input:focus{outline:none; border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(92,124,10,.14);}
+
+/* ---------------- 结果通知：页面内 Message（顶部居中轻提示） ---------------- */
+/* ⚠️ 规范：业务结果走页面内 Message，禁止原生 alert/confirm，也不依赖浏览器 Notification
+   （后者需用户授权、被拒后完全静默）。形态：顶部居中胶囊条，2.5s 后淡出，多条上下堆叠。
+   配色：成功/信息 = 荧光绿 --lime 左边条，失败 = --down 红。z-index 1200 压过 sticky 顶栏与弹窗。 */
+.wb-msg{position:fixed; top:18px; left:50%; transform:translateX(-50%); z-index:1200;
+  display:grid; gap:10px; justify-items:center; width:max-content; max-width:calc(100vw - 32px);
+  pointer-events:none;}
+.wb-msg-item{background:var(--bg); border:1px solid var(--border); border-left:3px solid var(--lime);
+  border-radius:10px; box-shadow:0 14px 40px rgba(27,27,20,.18); padding:11px 16px; max-width:420px;
+  animation:wb-msg-in .2s ease-out; transition:opacity .25s, transform .25s;}
+.wb-msg-item.is-err{border-left-color:var(--down);}
+.wb-msg-item.is-out{opacity:0; transform:translateY(-8px);}
+.wb-msg-item b{display:block; font-size:13.5px; font-weight:650; color:var(--ink-1);}
+.wb-msg-item span{display:block; font-size:12.5px; color:var(--ink-2); line-height:1.6;
+  margin-top:2px; overflow-wrap:anywhere;}
+@keyframes wb-msg-in{from{opacity:0; transform:translateY(-10px);} to{opacity:1; transform:none;}}
+
+/* ---------------- 杂项 ---------------- */
+.backup{display:flex; gap:8px; flex-wrap:wrap; margin-top:14px;}
+.footnote{font-size:12.5px; color:var(--ink-3);}
+
+/* ---------------- 空状态 ---------------- */
+.empty{color:var(--ink-3); font-size:13px; padding:6px 2px;}
+.empty-illu{display:flex; flex-direction:column; align-items:center; gap:8px;
+  padding:24px 0 14px; text-align:center;}
+.empty-illu svg{width:118px; height:118px; opacity:.97;}
+.empty-illu .empty-state-img{width:118px; height:118px; object-fit:contain; opacity:.97;}
+.empty-illu.small svg{width:92px; height:92px;}
+.empty-illu.small .empty-state-img{width:92px; height:92px;}
+.empty-illu .t{font-size:13px; color:var(--ink-3);}
+.empty-illu .s{font-size:12px; color:var(--ink-4); margin-top:-2px;}
+/* 空看板列引导：避免三列任一为空时只有灰底、无操作提示 */
+.empty-col-hint{font-size:11.5px; color:var(--ink-4); text-align:center; padding:13px 8px;
+  border:1px dashed var(--border); border-radius:var(--r-sm); margin-top:2px;}
+
+/* ---------------- 响应式 ---------------- */
+@media (max-width:900px){
+  .wb{padding:14px 12px 32px;}
+  .shell{padding:0 18px 28px; border-radius:22px;}
+  .topbar{margin:0 -18px; padding:18px 18px 14px; border-radius:22px 22px 0 0;}
+  .week-grid{grid-template-columns:minmax(0,1fr); grid-template-areas:"a" "b" "c";}
+  .brand h1{font-size:20px;}
+}
+@media (max-width:640px){
+  .card{padding:16px 16px;}
+  .stats{grid-template-columns:1fr;}
+  .kanban{grid-template-columns:1fr;}
+  .editor{padding:16px 16px;}
+  .topbar .acts{width:100%;}
+}
+/* 触屏没有 hover：操作按钮常显，否则删不掉 */
+@media (hover:none){
+  .kcard .act,.nlist .item .act{opacity:1;}
+}
+
+</style>
+</head>
+<body data-page-node-id="OmXDG6BjxrZ4oH19B3DOBV">
+<div class="wb" data-page-node-id="TTivRP0zutqmDxjkrTewqw"><div class="shell" data-page-node-id="E6X5QFsVGrrqvEaDSGUZvS">
+
+  <!-- 顶栏：品牌 + 当前周区间 | 同步状态 + 周切换 + 返回首页 -->
+  <header class="topbar" data-page-node-id="O5BuODWzlpR2HmxCc7TAGn">
+    <div class="brand" data-page-node-id="DpYcRk34Impu8KZWhAeYXU">
+      <h1 data-page-node-id="stAzAwh19j0NkEGwY8Bngd"><span class="mark" data-page-node-id="jnSDTJFs73sE0LtLSmyXaw"></span>周报</h1>
+      <span class="date" id="wkLabel" data-page-node-id="fGYGnBb1Gn1mgK6X3IKWdp"></span>
+      <!-- ⚠️ 周期切换贴近标题；返回入口在右侧 acts 内、同步徽标之前 -->
+      <span class="wk-nav" data-page-node-id="YFZ0DEFeAo8hC8PikBk766">
+        <button type="button" class="iconbtn wnav" data-dir="-1" title="上一周" data-page-node-id="gX1J8VwrddPI0fLJBPi5HU"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="yDcZBpPzHTlknxb7gaAoIQ"><path d="M15 6l-6 6 6 6" data-page-node-id="dztynBqZwC1z35YzeURanc"/></svg></button>
+        <button type="button" class="iconbtn wnav" data-dir="1" title="下一周" data-page-node-id="SssGNlfG1fW85uIeColzEC"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="svcpTJd3KNhSoKsNLnhzYv"><path d="M9 6l6 6-6 6" data-page-node-id="GG3MHtwjsulDnRYa4mnyq9"/></svg></button>
+      </span>
+    </div>
+    <div class="acts" data-page-node-id="ye9Bj5nYQWZL8sS1DHm5T4">
+      <a class="hintlink" href="/" aria-label="返回" data-page-node-id="SOFUXAty4GdfZ8vVFq06nJ"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-page-node-id="juIRHDSwuBBvr1KdcbhCDn"><path d="m3 10 9-7 9 7" data-page-node-id="qjY3xjNM0d6UogUpfYAWPR"/><path d="M5 9.5V21h14V9.5" data-page-node-id="9wXp60f8AiXKtD9fD8wZVl"/><path d="M9 21v-6h6v6" data-page-node-id="8AXNncDjhiz5tvmG2XSuqn"/></svg><span data-page-node-id="hioNtkCRYX0SmExTT47hOw">返回</span></a>
+      <span class="status" id="syncBadge" title="数据由后端服务持久化到 SQLite（weekly.db），重启不丢" data-page-node-id="auhcgbfvGhOqCnHs78YqQd">
+        <i class="dot" id="syncDot" data-page-node-id="2EfofW9BZsWJmXJ2MN6wqI"></i><span id="syncText" data-page-node-id="b10sFRyUwqOKYfVHYDeNBg">本地服务 · 数据持久化</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="grid week-grid" data-page-node-id="7niMUUnoToJJbliZ7jxWOm">
+
+    <!-- 主栏 a：本周工作看板 -->
+    <div class="col col-wa" data-page-node-id="r7B6tlIBcfWeLYDc4LXeAy">
+      <section class="card" data-page-node-id="zoXw3VeHI1oYQD2n73DD7F">
+        <div class="card-h" data-page-node-id="2iPdqkkHoOxVa1OvTvpIzp">
+          <h2 data-page-node-id="89PGtjr5LRQDRxS6aDdh4U"><span class="ic" data-page-node-id="aS4uzKalDhFUYFtHK4HPoy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="JPZTFarpmzKiYWMkrpsmPz"><path d="M20 6.5L9.5 17 4 11.5" data-page-node-id="9ZESSeYjiRTUmcPhcrBcGT"/></svg></span>本周工作</h2>
+          <span class="meta" id="weekItemCount" data-page-node-id="u9JaxEga2fOe63m3ax47eu"></span>
+        </div>
+        <form class="row" id="addForm" autocomplete="off" data-page-node-id="d19SkGG6kmDbaGDtMI9XLf">
+          <input class="flex1" id="fContent" placeholder="做了什么 / 要做什么" required data-page-node-id="KBPVqjnmyKBAtDrquVy3iH">
+          <input class="w120" id="fProject" placeholder="项目 / 分类" data-page-node-id="Xgvn6zSH4rnqtMRoUmnJgE">
+          <select id="fPriority" style="width:auto; flex:0 0 96px;" data-page-node-id="6eAOwp3eXctjGi0PSF5Hdv">
+            <option value="P0" data-page-node-id="E0BHAp9TUHsh19Wy1AOQvg">P0</option>
+            <option value="P1" selected data-page-node-id="3yC8L9Tx66smImFB9MiISb">P1</option>
+            <option value="P2" data-page-node-id="LYvMbq42VvWeSpA9BRBGUE">P2</option>
+          </select>
+          <input type="text" id="fDate" readonly placeholder="选择日期" autocomplete="off" style="width:auto; flex:0 0 150px;" data-page-node-id="8ufiI6nrwJtjhsJk1B2lv2">
+          <button type="submit" class="primary" data-page-node-id="qXqz2e50OdtY4xogLyEkas">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" data-page-node-id="7RHWqu3YAKKcAo84f20aMt"><path d="M12 5v14M5 12h14" data-page-node-id="vyaLIsSY5w9IhsCJNIaDc3"/></svg>
+            添加
+          </button>
+        </form>
+        <div class="stats" id="stats" data-page-node-id="5S0Ug5wyP0pC7bOtQZRIF6"></div>
+        <div class="kanban" id="kanban" data-page-node-id="pjtnPjr55uyiTQJ27hrAu8">
+          <div class="kcol" data-page-node-id="O2XhHHOo1RMHx9QQgxZR6S">
+            <div class="khead" data-page-node-id="1hWktclV2e3kttG4uWtyi7"><span data-page-node-id="BlrT71A8hrwE8GznSvfv1g">已完成</span><span class="kcount" id="kc_done" data-page-node-id="HowqAoLcbBsk5C0NHs7Oww">0</span></div>
+            <div class="kbody" id="kcol_done" data-status="done" data-page-node-id="WyhmWk9QXOd93ZIjiF5Xme"></div>
+          </div>
+          <div class="kcol" data-page-node-id="FASEJMAYtVzzCyfIklM9bn">
+            <div class="khead" data-page-node-id="Ja0eus0mgAFlnodAysGopD"><span data-page-node-id="75Pk4ABEC14OlKUZSH7Rek">进行中</span><span class="kcount" id="kc_doing" data-page-node-id="tNkgyOYBs63znDi4PT9CFI">0</span></div>
+            <div class="kbody" id="kcol_doing" data-status="doing" data-page-node-id="QCkJA1kJwMD2i3d6BTOAJY"></div>
+          </div>
+          <div class="kcol" data-page-node-id="zHF4SSPblsQ82jisV4ShYi">
+            <div class="khead" data-page-node-id="kYqGP1Uu1GhdHdmArveXDW"><span data-page-node-id="HLUx8EZGdGUThHHsBrWieT">未完成</span><span class="kcount" id="kc_todo" data-page-node-id="37e6UBSeozYEDn1D05IUzF">0</span></div>
+            <div class="kbody" id="kcol_todo" data-status="todo" data-page-node-id="zhZQpCW1XybGn78TU3ijdh"></div>
+          </div>
+        </div>
+        <div class="backup" data-page-node-id="uvI8h4DORAp3USKhkuJ3ha">
+          <button type="button" class="ghost sm" id="exportBtn" data-page-node-id="kBm9RNanPr1D0bzlkzoyZi">导出备份</button>
+          <button type="button" class="ghost sm" id="importBtn" data-page-node-id="M0Wn66XI9zPQz89FZ9qpgW">导入恢复</button>
+          <input type="file" id="importFile" accept="application/json" style="display:none" data-page-node-id="epgCCXZAfycPI1MCGcguTL">
+        </div>
+      </section>
+    </div>
+
+    <!-- 主栏 b：本周周报（编辑区） -->
+    <div class="col col-wb" data-page-node-id="9qopt41BE4GpLQKrOERqJD">
+      <section class="card" data-page-node-id="AhgV5UGbKcJF5xO0vi485x">
+        <div class="card-h" data-page-node-id="D7OTfLljW0qXYjjCNRad8H">
+          <h2 data-page-node-id="uGEVf37vdXF3anhyylD7zA"><span class="ic" data-page-node-id="KEJJPa3Kngzeyiu3h5nsUd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="FQNpNrdibG52kn4rGWAgpo"><path d="M12 20h9" data-page-node-id="hozvFZsKMP16YGxVGaJGYm"/><path d="M16.8 3.6a2.1 2.1 0 0 1 3 3L8.4 18l-4 1.1 1.1-4z" data-page-node-id="KM3eKuzOgWoJi5SEH5GiDf"/></svg></span>本周周报</h2>
+          <span class="meta" id="repWkLabel" data-page-node-id="MnPCtctlCAXjVVsg8cUZT8"></span>
+        </div>
+        <div class="toolbar" data-page-node-id="sCCSqEzKEDIwgMXCuvFMis">
+          <button type="button" id="genBtn" class="primary" data-page-node-id="tbFJKTXeF4f0Fr0CVQPjoh">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="7woCRNBzsosfy45k2URszL"><path d="M23 4v6h-6M1 20v-6h6" data-page-node-id="92QarUDYXZbkIcGBniMSDO"/><path d="M3.5 9a9 9 0 0 1 14.8-3.4L23 10M1 14l4.7 4.4A9 9 0 0 0 20.5 15" data-page-node-id="Eh6xvZq9imL27KyTgmBVdW"/></svg>
+            自动生成
+          </button>
+          <button type="button" id="copyBtn" data-page-node-id="w0J6oUTTvWhhzYfq74WcD9">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="kh4ClAlu3K9ptzXyTiVikH"><rect x="9" y="9" width="11" height="11" rx="2" data-page-node-id="KVCsD0ycdjD5quce5W63pJ"/><path d="M5 15V5a2 2 0 0 1 2-2h10" data-page-node-id="wAgCXGE7NDz2qfeMHxe6XI"/></svg>
+            复制周报
+          </button>
+          <span id="copyTip" class="footnote" style="align-self:center;" data-page-node-id="Ja5wBxGh1AQeSRSqqlByA6"></span>
+          <!-- ⚠️ 编辑/保存按钮排在最后（2026-09-05 用户要求）：与「复制周报」及其提示紧邻，视觉上归为末尾操作 -->
+          <button type="button" id="editSaveBtn" title="编辑本周周报">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.8 3.6a2.1 2.1 0 0 1 3 3L8.4 18l-4 1.1 1.1-4z"/></svg>
+            <span id="editSaveTxt">编辑</span>
+          </button>
+        </div>
+        <div class="rte" data-page-node-id="Igc7dr3IKhoIjf1F7NeKAQ">
+          <div class="rte-bar" data-page-node-id="G5U2qwQ7GfMYHVHTaLlUgo">
+            <button type="button" class="rte-btn" data-cmd="bold" title="加粗" data-page-node-id="LEzcAToQbAHiDlUMnfSydB"><b data-page-node-id="AZL0tllWlQ0iYLrSBt7d5A">B</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic" title="斜体" data-page-node-id="4hOkCG0D1v91LloAUqD7Ir"><i data-page-node-id="nHCERfS5L1OIRuJb1FiJl0">I</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline" title="下划线" data-page-node-id="gDnqkzRLoSS8TeP37ooTwN"><u data-page-node-id="DntUGLh3NnV1Smms4BEIai">U</u></button>
+            <button type="button" class="rte-btn" data-cmd="formatBlock" data-val="H3" title="标题" data-page-node-id="l4lrlT1NeQDGuBNlrTZccy">H</button>
+            <button type="button" class="rte-btn" data-cmd="hiliteColor" title="高亮（再点一次取消）" data-page-node-id="fKbQQhzWtOhhL8TiCURcmQ">高亮</button>
+            <button type="button" class="rte-btn" data-cmd="formatBlock" data-val="BLOCKQUOTE" title="引用块" data-page-node-id="Yq9vnJRMGk2wdCyqq6BNgm">引用</button>
+            <button type="button" class="rte-btn" data-cmd="formatBlock" data-val="PRE" title="代码块" data-page-node-id="oTslYBTEMfJ7FkT30wilsD">代码</button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList" title="无序列表" data-page-node-id="NJVUD1pO3Ayr2wLl0yfv9M">列表</button>
+            <button type="button" class="rte-btn" data-cmd="insertOrderedList" title="有序列表" data-page-node-id="e7vOvoX97zgkmFKRlctjej">有序</button>
+            <button type="button" class="rte-btn" data-cmd="justifyLeft" title="左对齐" data-page-node-id="LG3wb8fOJuNEIEwNUdxvSz">靠左</button>
+            <button type="button" class="rte-btn" data-cmd="justifyCenter" title="居中" data-page-node-id="QGK4wvxLDA54QlgXxv9RIO">居中</button>
+            <button type="button" class="rte-btn" data-cmd="justifyRight" title="右对齐" data-page-node-id="AEEUILMhkKYxvHKBgznPGl">靠右</button>
+            <button type="button" class="rte-btn" data-cmd="createLink" title="插入链接（先选中文字）" data-page-node-id="Apw9cHBdhW6prIvZgdlRCU">链接</button>
+            <button type="button" class="rte-btn" data-cmd="unlink" title="移除链接" data-page-node-id="zj6PKcFs8FWZDb8pSeqJ8Y">移除链接</button>
+            <button type="button" class="rte-btn" id="imgBtn" title="插入图片" data-page-node-id="qk3CKduz2x3vfNaO75CBQr">图片</button>
+            <input type="file" id="imgFile" accept="image/*" style="display:none" data-page-node-id="3qCvvy7v3BxHp4urTISdOz">
+          </div>
+          <div class="editor" id="reportBox" contenteditable="false" data-ph="本周周报内容区（点上方「编辑」后可修改）…" data-page-node-id="T5j2V2Exrp2i6PdaYBnDib"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 侧栏 c：下周计划（窄版竖排表单 + 两行条目） -->
+    <div class="col col-wc" data-page-node-id="SL5kli608Y2BdtEAHWvNI4">
+      <section class="card" data-page-node-id="8Er1oy8EPnVaNypJ8MxK7T">
+        <div class="card-h" data-page-node-id="bhL3Abc3GK759oeJ9Pxt8p">
+          <h2 data-page-node-id="jhqwEdy9cZVdQEUYTrZXL9"><span class="ic" data-page-node-id="eSGYoJeYwEL8sU211yBHdt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="1zljDHlkCaVIg9ZERiEPKK"><path d="M4.5 12h14" data-page-node-id="n4M1qNzk06ro9fqEU8k3Rl"/><path d="M12.5 5.5l7 6.5-7 6.5" data-page-node-id="SRkRNwUSFKAiYtcS2IKsgy"/></svg></span>下周计划</h2>
+          <span class="meta" id="nextCount" data-page-node-id="zl6pcDvkI4T60QAxB4OtTW"></span>
+        </div>
+        <p class="nwr" id="nextWeekRange" data-page-node-id="mxno9YdGGKX5vVSR7BGn4z"></p>
+        <form class="nform" id="nextForm" autocomplete="off" data-page-node-id="iIVR9FGDboIcWcYGaIgMPi">
+          <input class="wide" id="nContent" placeholder="下周要推进的事" required data-page-node-id="OagcFXX4fGKQnsBnkpiQF2">
+          <input type="text" id="nDate" title="计划日期（同步到看板）" readonly placeholder="选择日期" autocomplete="off" required data-page-node-id="8xChof99DeQehcIyISCIG6">
+          <select id="nPriority" required data-page-node-id="Hn1M2ApmgREJF50jM0rtC6">
+            <option value="" disabled selected data-page-node-id="OIriwb9kmpQFwanBQvrJb3">等级</option>
+            <option value="P0" data-page-node-id="QifzXGeB8sGmsCvduukHuJ">P0</option>
+            <option value="P1" data-page-node-id="JoKfD4bLaHrQOPYnt7haku">P1</option>
+            <option value="P2" data-page-node-id="RyxLniqoxsKaqgqvVDdfKk">P2</option>
+          </select>
+          <input class="wide" id="nProject" placeholder="项目 / 分类" data-page-node-id="rVUfz4R3dPbUw9G2nTXNEe">
+          <div class="btnrow" data-page-node-id="oAAcmEJRVPxKKF1iuzHkrU"><button type="submit" class="primary" data-page-node-id="18IFAhIhYZKfzQ5J0rareN">添加</button></div>
+        </form>
+        <div class="nlist" id="nextList" data-page-node-id="7OcvZwbIGVUbLkov8XCzrt"></div>
+      </section>
+    </div>
+
+  </div>
+
+</div></div>
+
+<!-- 图片点击放大预览灯箱（编辑器内点击图片时打开） -->
+<div class="lightbox" id="lightbox" data-page-node-id="dSmzIzoJAZBi1DagTGW0LM"><img id="lightboxImg" src="" alt="" data-page-node-id="CRADUVKGcLyrsr3fxocg3i"></div>
+
+<!-- 任务编辑弹窗：一次性修改任务的四个属性 -->
+<div class="edit-modal" id="editModal" role="dialog" aria-modal="true" aria-labelledby="editModalTitle" data-page-node-id="kzGb1WP4g5mkt3YDo6tNQE">
+  <div class="edit-dialog" data-page-node-id="lIoARtjVRb4LP82farcB1y">
+    <div class="modal-head" data-page-node-id="hGTH9mQQ92LS4yeqvvMRiZ">
+      <h3 id="editModalTitle" data-page-node-id="nZyibttyZjcYB6lE8vEpLS">编辑任务</h3>
+      <button type="button" class="iconbtn" id="editCloseBtn" aria-label="关闭编辑任务" data-page-node-id="DxZxnyDm2HgfRCjM5bfKUV">×</button>
+    </div>
+    <form class="edit-form" id="editForm" autocomplete="off" data-page-node-id="acC4XkfHAVzT3XBg3LWKQj">
+      <label data-page-node-id="ZFFpNOcn7Y5ddPHk5UsZ0e">任务内容
+        <textarea id="editContent" rows="3" required></textarea>
+      </label>
+      <label data-page-node-id="ZLsEj6fA9Y8tgxnUC0gOnt">项目 / 分类
+        <input id="editProject" type="text" data-page-node-id="CFuBJN9Lsj0F3rPcdhnytZ">
+      </label>
+      <div class="edit-row" data-page-node-id="SypKRRk5JzkifOUYqf2DfJ">
+        <label data-page-node-id="fFVF38rjBeouF66YJAbv5O">日期
+          <input id="editDate" type="text" readonly placeholder="选择日期" autocomplete="off" required data-page-node-id="xHjHXXi5sAyQwmgE14CHeY">
+        </label>
+        <label data-page-node-id="4Z7Znm2ACetubWp4lL0J4K">优先级
+          <select id="editPriority" required data-page-node-id="7K2dLF4zwQQZEiO9i9gXkb">
+            <option value="P0" data-page-node-id="BUBnPQ0hkmuafliRBp5MMd">P0</option>
+            <option value="P1" data-page-node-id="d3qtppY06AhrvphItjRDBE">P1</option>
+            <option value="P2" data-page-node-id="W9S4dbmuV5J7CU3KTXtHCL">P2</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-actions" data-page-node-id="GYn8uVr0Thv1HvSVUj32xQ">
+        <button type="button" class="ghost" id="editCancelBtn" data-page-node-id="tNNAnnsJpv97LbNF3LIk5x">取消</button>
+        <button type="submit" class="primary" data-page-node-id="HtZ40uIwEpQDldWcKDflEM">保存修改</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 通用确认弹窗（自绘，替代原生 confirm）：标题/文案/按钮由 openConfirm 动态注入 -->
+<div class="edit-modal" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle" data-page-node-id="4mfIfmgrTt6llHnaCL6cNl">
+  <div class="confirm-dialog" data-page-node-id="F6DtyOh3DIJhlZGqubriGt">
+    <h3 id="confirmModalTitle" style="margin:0 0 10px;color:var(--ink-1);font-size:16px;" data-page-node-id="wHeHiaImGzxpIcDpIxXfUp">删除确认</h3>
+    <p class="confirm-msg" id="confirmMsg" data-page-node-id="Bmiob9Z95nUnbhOoIhPyiW"></p>
+    <div class="modal-actions" data-page-node-id="sxRAVCZGHDeNcGPrcF48vw">
+      <button type="button" class="ghost" id="confirmCancelBtn" data-page-node-id="bz9DqwXyUvyJj4oE5M4pBt">取消</button>
+      <button type="button" class="danger" id="confirmOkBtn" data-page-node-id="AyB38EQC8WyJTHI9t4imD0">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 插入链接弹窗（自绘，替代原生 prompt）：采集 URL 后交回回调写入编辑区 -->
+<div class="edit-modal" id="linkModal" role="dialog" aria-modal="true" aria-labelledby="linkModalTitle">
+  <div class="confirm-dialog">
+    <h3 id="linkModalTitle" style="margin:0 0 10px;color:var(--ink-1);font-size:16px;">插入链接</h3>
+    <p class="confirm-msg" id="linkMsg">为编辑区内选中的文字设置跳转地址。</p>
+    <input class="link-input" id="linkUrlInput" type="url" placeholder="https://" autocomplete="off" spellcheck="false">
+    <div class="modal-actions">
+      <button type="button" class="ghost" id="linkCancelBtn">取消</button>
+      <button type="button" class="primary" id="linkOkBtn">插入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 自绘日期选择器浮层：body 直挂 + fixed 定位，避免被父容器 overflow 裁剪；
+     内容全部由 JS 渲染，hidden 属性控制显隐 -->
+<div class="dp" id="datePicker" role="dialog" aria-label="选择日期" hidden>
+  <div class="dp-head">
+    <button type="button" class="dp-nav" data-dp-nav="-1" aria-label="上一月">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <span class="dp-title" id="dpTitle"></span>
+    <button type="button" class="dp-nav" data-dp-nav="1" aria-label="下一月">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+  </div>
+  <div class="dp-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+  <div class="dp-grid" id="dpGrid"></div>
+  <div class="dp-foot">
+    <button type="button" class="dp-today" id="dpTodayBtn">今天</button>
+    <button type="button" id="dpClearBtn">清除</button>
+  </div>
+</div>
+
+<!-- 自绘下拉浮层：body 直挂 + fixed 定位，避免被看板列 overflow 裁剪；
+     选项由 JS 从原生 select 的 <option> 读出来重绘，hidden 属性控制显隐 -->
+<div class="cs" id="selectPicker" role="listbox" aria-label="选择选项" hidden>
+  <div id="csList"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var TRASH='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
+  // 小黑空状态插画：透明 SVG 资源，保持页面离线可用。
+  var EMPTY_PEN='<img class="empty-state-img" src="/assets/empty-state-illustrations/06-week-log-v2.svg" alt="">';
+  var EMPTY_CLOUD='<img class="empty-state-img" src="/assets/empty-state-illustrations/07-next-plan-v1.svg" alt="">';
+  var state={ items:[], next:[], reports:{}, okr:{}, viewWeek:"", viewMonth:"" };
+
+  /* ---------- 结果通知：页面内 Message（顶部居中轻提示） ---------- */
+  // ⚠️ 规范（2026-09-04 定稿）：业务结果（导入成功/失败、保存成功、冲突提示等）走页面内 Message，
+  //    禁止 alert() / window.confirm() 这类原生弹框；也不依赖浏览器 Notification（需用户授权，
+  //    被拒后完全静默、用户收不到任何反馈）。多条同时出现时上下堆叠，各自 2.5s 后淡出。
+  var msgHost=null;
+  function notify(title, body, isErr){
+    if(!msgHost){
+      msgHost=document.createElement("div");
+      msgHost.className="wb-msg";
+      msgHost.setAttribute("role","status");
+      msgHost.setAttribute("aria-live","polite");
+      document.body.appendChild(msgHost);
+    }
+    var el=document.createElement("div");
+    el.className="wb-msg-item"+(isErr?" is-err":"");
+    var b=document.createElement("b"); b.textContent=title; el.appendChild(b);
+    if(body){ var s=document.createElement("span"); s.textContent=body; el.appendChild(s); }
+    msgHost.appendChild(el);
+    setTimeout(function(){
+      el.classList.add("is-out");
+      setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); },260);
+    },2500);
+  }
+
+  /* ---------- 数据层：后端服务持久化（SQLite，无 localStorage） ---------- */
+  var API = "/api/data";
+  var saveTimer = null;
+  var saveInFlight = false;  // ⚠️ PUT 在途标记：上一发未返回前不发第二个，避免带旧 __v 自撞 409
+  var saveAgain = false;     // 在途期间又有新改动：返回后补发一次
+  var dataLoaded = false;   // ⚠️ 防护标记：load() 成功前禁止 save()，避免服务故障时把空/示例状态 PUT 覆盖服务端
+
+  function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+  function serializeState(){
+    return { items:state.items, next:state.next, reports:state.reports,
+             okr:state.okr, viewWeek:state.viewWeek, viewMonth:state.viewMonth,
+             __v:state.__v||0 };   // ⚠️ 乐观锁：提交必须带回 GET 时的版本号
+  }
+  function applyState(s){
+    state.__v = s.__v||0;   // 记录服务端版本号，提交时原样带回
+    state.items=s.items||[]; state.next=s.next||{};
+    state.reports=s.reports||{}; state.okr=s.okr||{};
+    state.viewWeek=s.viewWeek||mondayStr(new Date());
+    state.viewMonth=s.viewMonth||monthKey(new Date());
+    var changed=false, now=todayStr();
+    state.items.forEach(function(it){
+      // ⚠️ 旧数据兼容（2026-09-04 新流转规则）：
+      // doingAt 是「进入进行中/直接完成」的起点——历史 done 缺 doingAt 时用 doneAt 补齐（起点=完成日），
+      // doing 缺 doingAt 才补今天（不再像旧逻辑那样每次加载都刷新成今天，那会破坏起点语义）。
+      if(it.status==="done"){
+        if(!it.doneAt){ it.doneAt=it.date||""; changed=true; }   // 缺完成日用原任务日期补齐
+        if(!it.doingAt){ it.doingAt=it.doneAt; changed=true; }   // 缺起点用完成日补齐
+      }else if(it.status==="doing"){
+        if(!it.doingAt){ it.doingAt=now; changed=true; }
+        if(it.doneAt){ it.doneAt=""; changed=true; }
+      }else{
+        if(it.doingAt){ it.doingAt=""; changed=true; }
+        if(it.doneAt){ it.doneAt=""; changed=true; }
+      }
+    });
+    // 兼容旧版：next 曾是全局数组，统一迁移为「按下一周周一分键」的对象
+    if(Array.isArray(state.next)){
+      var _nw=nextWeekKey(), _old=state.next; state.next={}; state.next[_nw]=_old;
+    }
+    if(changed) setTimeout(save,0);
+  }
+  function load(){
+    return fetch(API, {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(d){
+      applyState(d||{});
+      dataLoaded = true;   // 只有真实拿到服务端数据后才放行 save()
+    }).catch(function(err){
+      console.error("[api] 加载失败，服务端可能未启动", err);
+      setSaveStatus("服务未连接", true);
+      throw err;
+    });
+  }
+  function save(){
+    // ⚠️ 已静默化：保存过程不再触发右上角文字闪烁（用户偏好）
+    if(!dataLoaded) return;   // 数据从未成功加载时不允许回写，防止空状态覆盖服务端
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, 400);   // 防抖：连续操作合并为一次提交
+  }
+  // 立即落盘：绕过 400ms 防抖立刻发请求（页面不卸载时用，如切换星期）
+  function flushSaveNow(){
+    clearTimeout(saveTimer);
+    flushSave();
+  }
+  // ⚠️ 离开页面前的同步落盘：fetch 会在页面卸载时被取消，同步 XHR 才能保证请求发出去。
+  //    仅用于「返回主页」这类会真正卸载页面的跳转，本地服务耗时可忽略。
+  function flushSaveSync(){
+    if(!dataLoaded) return;
+    clearTimeout(saveTimer);
+    var ok=false;
+    try{
+      var xhr=new XMLHttpRequest();
+      xhr.open("PUT", API, false);            // 同步
+      xhr.setRequestHeader("Content-Type","application/json");
+      // ⚠️⚠️ 同步 XHR 上【绝对不能】设置 xhr.timeout —— 规范规定同步请求给 timeout 赋值会抛
+      //    InvalidAccessError，异常被下面的 catch 吞掉后 xhr.send() 压根不会执行，表现为"点了返回没保存"。
+      //    （2026-09-04 实测踩坑。同步请求的超时由浏览器兜底，本地服务无需设置。）
+      xhr.send(JSON.stringify(serializeState()));
+      ok = (xhr.status>=200 && xhr.status<300);
+      if(ok){
+        var j=null; try{ j=JSON.parse(xhr.responseText); }catch(e){}
+        if(j && typeof j.__v==="number") state.__v=j.__v;   // 带回新版本号
+      }else{
+        console.error("[api] 离开前同步保存返回非 2xx:", xhr.status);
+      }
+    }catch(e){
+      // 同步保存失败：状态已在 state 里，下次进页面仍会带上（不阻塞跳转）
+      console.error("[api] 离开前同步保存失败", e);
+    }
+    if(!ok) flushSaveNow();   // 兜底：同步没成功就再补一发异步（页面若是跳周还能救回来）
+  }
+  function flushSave(){
+    // ⚠️ 保存请求严格串行：在途时不发新请求，等返回后补发最新状态
+    if(saveInFlight){ saveAgain=true; return; }
+    saveInFlight=true;
+    fetch(API, {method:"PUT", headers:{"Content-Type":"application/json"},
+                 body:JSON.stringify(serializeState())})
+      .then(function(r){
+        // ⚠️ 409 = 页面加载后数据已被其他页面更新（持有过期快照），强制刷新同步
+        if(r.status===409){ notify("数据已被其他页面更新","页面即将刷新以同步最新内容。",true); location.reload(); return null; }
+        return r.json();
+      })
+      .then(function(j){
+        saveInFlight=false;
+        if(!j) return;                                 // 409 已触发刷新
+        if(typeof j.__v==="number") state.__v=j.__v;   // 更新本地版本号，保证下次提交有效
+        if(saveAgain){ saveAgain=false; flushSave(); } // 在途期间又有改动：补发一次
+      })
+      .catch(function(err){
+        saveInFlight=false;
+        console.error("[api] 保存失败", err);
+        saveTimer = setTimeout(flushSave, 1500);
+      });
+  }
+  function setSaveStatus(text, isErr){
+    // ⚠️ 已静默化：右上角不再因切换月份/周/编辑而闪"保存中…"
+    var d=document.getElementById("syncDot");
+    if(d) d.style.background = isErr ? "var(--red)" : "var(--green)";
+  }
+  // ⚠️ 前端 seed 兜底已移除（2026-09-04）：示例数据一旦被 save() 回写会覆盖服务端真实数据；
+  //    服务不可达时页面仅渲染空状态，dataLoaded=false 保证任何交互都不会落盘。
+
+  /* ---------- 计算层 ---------- */
+  function todayStr(){ return fmt(new Date()); }
+  function fmt(d){ var y=d.getFullYear(),m=("0"+(d.getMonth()+1)).slice(-2),day=("0"+d.getDate()).slice(-2); return y+"-"+m+"-"+day; }
+  function parse(s){ var p=s.split("-"); return new Date(+p[0],+p[1]-1,+p[2]); }
+  function addDays(s,n){ var d=parse(s); d.setDate(d.getDate()+n); return fmt(d); }
+  function getMonday(d){ var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()); var day=x.getDay(); var diff=(day===0)?-6:(1-day); x.setDate(x.getDate()+diff); return x; }
+  function mondayStr(d){ return fmt(getMonday(d)); }
+  function weekRange(monStr){ var mon=parse(monStr); var sun=new Date(mon); sun.setDate(mon.getDate()+6); return {mon:fmt(mon),sun:fmt(sun)}; }
+  // 返回“周一落在该月”的所有周（按周一 ISO 字符串升序）——用于限定周报工作台只在该月内切换
+  function monthMondays(mk){
+    var p=mk.split("-"), y=+p[0], m=+p[1], cur=new Date(y,m-1,1);
+    while(cur.getDay()!==1) cur.setDate(cur.getDate()+1);   // 推进到当月第一个周一
+    var res=[];
+    while(cur.getMonth()===(m-1)){ res.push(fmt(cur)); cur.setDate(cur.getDate()+7); }
+    return res;
+  }
+  function nextWeekKey(){ return addDays(state.viewWeek, 7); }   // 当前周视图的下一周（周一）
+  function getWeekItems(wr){ return state.items.filter(function(it){ return it.date>=wr.mon && it.date<=wr.sun; }); }
+  function monthKey(d){ return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2); }
+
+  /* ---------- 渲染层（互不调用） ---------- */
+  function el(html){ var d=document.createElement("div"); d.innerHTML=html.trim(); return d.firstChild; }
+  function esc(s){ return (s||"").replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+
+  function renderWeekNav(){
+    var wr=weekRange(state.viewWeek);
+    var weeks=monthMondays(monthKey(parse(state.viewWeek)));   // 当前周所属月的全部周
+    var idx=weeks.indexOf(state.viewWeek);
+    var lbl=wr.mon+" ~ "+wr.sun;
+    if(idx>=0) lbl+="（第 "+(idx+1)+"/"+weeks.length+" 周）";   // 不出现“本周/上周”字样
+    var wk=document.getElementById("wkLabel"); if(wk) wk.textContent=lbl;
+    var rk=document.getElementById("repWkLabel"); if(rk) rk.textContent=lbl;
+    // 仅在该月周区间内切换，首/末周禁用对应箭头
+    var canPrev=idx>0, canNext=idx>=0 && idx<weeks.length-1;
+    Array.prototype.forEach.call(document.querySelectorAll(".wnav"),function(b){
+      var dis=(b.dataset.dir==="-1")? !canPrev : !canNext;
+      b.disabled=dis; b.style.opacity=dis?0.3:1; b.style.cursor=dis?"default":"pointer";
+    });
+  }
+  function moveWeek(delta){
+    // ⚠️ 切换星期前自动保存当前周的周报草稿（用户要求：跳周自动保存后再跳转）
+    autoSaveBeforeLeave(false);
+    var weeks=monthMondays(monthKey(parse(state.viewWeek)));
+    var idx=weeks.indexOf(state.viewWeek);
+    if(idx<0){ state.viewWeek=weeks[weeks.length-1]||state.viewWeek; }  // 兜底：归入该月最后一周
+    else { var ni=idx+delta; if(ni<0||ni>=weeks.length) return; state.viewWeek=weeks[ni]; }
+    save(); refreshAll();
+  }
+  function renderStats(){
+    var wr=weekRange(state.viewWeek), wi=getWeekItems(wr);
+    var done=wi.filter(function(it){return it.status==="done";}).length;
+    var doing=wi.filter(function(it){return it.status==="doing";}).length;
+    var todo=wi.filter(function(it){return it.status==="todo";}).length;
+    var box=document.getElementById("stats"); box.innerHTML="";
+    box.appendChild(el('<div class="stat green"><div class="num">'+done+'</div><div class="lab">本周完成</div></div>'));
+    box.appendChild(el('<div class="stat amber"><div class="num">'+doing+'</div><div class="lab">进行中</div></div>'));
+    box.appendChild(el('<div class="stat"><div class="num">'+todo+'</div><div class="lab">未完成</div></div>'));
+  }
+  function renderKanban(){
+    if(csIsOpen()) closeSelectPicker();   // ⚠️ 卡片整体重绘会摘掉触发器，浮层必须先收
+    var wr=weekRange(state.viewWeek);
+    var wi=getWeekItems(wr).slice().sort(function(a,b){ return a.date<b.date?-1:(a.date>b.date?1:0); });
+    var cols={ done:document.getElementById("kcol_done"),
+               doing:document.getElementById("kcol_doing"),
+               todo:document.getElementById("kcol_todo") };
+    cols.done.innerHTML=""; cols.doing.innerHTML=""; cols.todo.innerHTML="";
+    if(!wi.length){
+      cols.todo.appendChild(el('<div class="empty-illu small">'+EMPTY_PEN+'<div class="t">这一周还没有工作记录</div><div class="s">在上方添加一条吧。</div></div>'));
+    }
+    wi.forEach(function(it){
+      var col=cols[it.status]||cols.todo;
+      var card=el('<div class="kcard '+(it.status==="done"?"done":"")+'" draggable="true"></div>');
+      // 拖拽：把卡片 id 带过去，落到某列即把状态改成该列状态
+      card.addEventListener("dragstart",function(e){ e.dataTransfer.setData("text/plain", it.id); });
+      card.appendChild(el('<div class="ct">'+esc(it.content)+'</div>'));
+      card.appendChild(el('<div class="sub"><span class="tag '+it.priority.toLowerCase()+'">'+it.priority+'</span><span class="tag proj">'+esc(it.project||"未分类")+'</span><span>'+esc(it.date)+'</span></div>'));
+      var foot=el('<div class="kfoot"></div>');
+      var sel=el('<select class="kstatus" aria-label="更改状态"><option value="done">已完成</option><option value="doing">进行中</option><option value="todo">未完成</option></select>');
+      sel.value=it.status;
+      sel.addEventListener("change",function(){ setStatus(it.id, this.value); });
+      bindCustomSelect(sel);      // 自绘下拉（卡片每次重绘都是新节点，靠 dataset.csBound 防重复绑定）
+      var act=el('<div class="act"></div>');
+      var edit=el('<button class="iconbtn" title="编辑" aria-label="编辑任务"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.8 3.6a2.1 2.1 0 0 1 3 3L8.4 18l-4 1.1 1.1-4z"/></svg></button>');
+      edit.addEventListener("click",function(){ openEditItem(it.id); });
+      var del=el('<button class="iconbtn" title="删除">'+TRASH+'</button>');
+      del.addEventListener("click",function(){ removeItem(it.id); });
+      act.appendChild(edit); act.appendChild(del);
+      foot.appendChild(sel); foot.appendChild(act);
+      card.appendChild(foot);
+      col.appendChild(card);
+    });
+    // 空列引导：done/doing/todo 任一为空时显示柔和占位（整周全空时 todo 已有插画，则只补另外两个空列）
+    ["done","doing","todo"].forEach(function(st){
+      var c=cols[st];
+      if(!c.querySelector(".kcard") && !c.querySelector(".empty-illu")){
+        c.appendChild(el('<div class="empty-col-hint">暂无 · 从其他列拖入，或上方添加</div>'));
+      }
+    });
+    document.getElementById("kc_done").textContent=wi.filter(function(x){return x.status==="done";}).length;
+    document.getElementById("kc_doing").textContent=wi.filter(function(x){return x.status==="doing";}).length;
+    document.getElementById("kc_todo").textContent=wi.filter(function(x){return x.status==="todo";}).length;
+    var wcEl=document.getElementById("weekItemCount"); if(wcEl) wcEl.textContent=wi.length+" 条记录";
+  }
+  function generateReportHTML(wr){
+    var wi=getWeekItems(wr);
+    var done=wi.filter(function(it){return it.status==="done";});
+    var doing=wi.filter(function(it){return it.status==="doing";});
+    var groups={};
+    done.forEach(function(it){ var p=it.project||"其他"; (groups[p]=groups[p]||[]).push(it.content); });
+    var H=[];
+    H.push('<h3>工作周报（'+wr.mon+' ~ '+wr.sun+'）</h3>');
+    H.push('<p><strong>一、本周完成</strong></p>');
+    var ps=Object.keys(groups);
+    if(!ps.length) H.push('<p>（无）</p>');
+    else ps.forEach(function(p){
+      H.push('<p><strong>【'+esc(p)+'】</strong></p><ul>');
+      groups[p].forEach(function(c){ H.push('<li>'+esc(c)+'</li>'); });
+      H.push('</ul>');
+    });
+    H.push('<p><strong>二、进行中</strong></p>');
+    if(!doing.length) H.push('<p>（无）</p>');
+    else { H.push('<ul>'); doing.forEach(function(it){ H.push('<li>'+esc(it.content)+'【'+esc(it.project||"未分类")+'】</li>'); }); H.push('</ul>'); }
+    H.push('<p><strong>三、下周计划</strong></p>');
+    var nx=state.next[nextWeekKey()]||[];
+    if(!nx.length) H.push('<p>（无）</p>');
+    else { H.push('<ul>'); nx.forEach(function(it){ H.push('<li>'+esc(it.content)+(it.project?('【'+esc(it.project)+'】'):'')+'</li>'); }); H.push('</ul>'); }
+    H.push('<p><strong>四、其他关注点</strong></p>');
+    // 默认栏目内容直接在编辑器内填写（生成后可直接修改本段）
+    H.push('<p>（无）</p>');
+    return H.join('');
+  }
+  /* ---------- 周报编辑态：默认只读 → 点「编辑」进入 → 点「保存」落库 ---------- */
+  // ⚠️ 规范（2026-09-04 定稿）：
+  //   ① 默认不可编辑；② 编辑期间的改动只留在 DOM 里当草稿，绝不写进 state.reports 也不 save()，
+  //      所以直接关闭/刷新页面 = 丢弃改动（天然满足，无需 beforeunload）；
+  //   ③ 点「保存」、或「切换星期 / 返回主页」时才提交并落库。
+  var reportEditing = false;   // 是否处于编辑态
+  var reportDirty   = false;   // 编辑期间是否真有改动（避免把自动生成的模板当内容落库）
+  function updateEditBtn(){
+    var btn=document.getElementById("editSaveBtn"), txt=document.getElementById("editSaveTxt");
+    if(txt) txt.textContent = reportEditing ? "保存" : "编辑";
+    if(btn){
+      btn.classList.toggle("primary", reportEditing);
+      btn.title = reportEditing ? "保存本周周报" : "编辑本周周报";
+    }
+    var bar=document.querySelector(".rte-bar");
+    if(bar) bar.classList.toggle("is-disabled", !reportEditing);
+  }
+  function setReportEditable(on){
+    var box=document.getElementById("reportBox");
+    reportEditing=on;
+    if(!on) reportDirty=false;
+    if(box){
+      box.setAttribute("contenteditable", on?"true":"false");
+      box.classList.toggle("is-editing", on);
+      if(on) box.focus();
+    }
+    updateEditBtn();
+  }
+  // 提交草稿：有改动才写回 state.reports。返回是否真的改动过。
+  // ⚠️ 只改内存不落库——要不要 save() 由调用方决定（保存按钮 / 离开页面各有处理）
+  function commitReport(){
+    if(!reportEditing) return false;
+    var box=document.getElementById("reportBox"), dirty=reportDirty;
+    if(dirty && box) state.reports[state.viewWeek]=box.innerHTML;
+    reportEditing=false; reportDirty=false;
+    if(box){ box.setAttribute("contenteditable","false"); box.classList.remove("is-editing"); }
+    updateEditBtn();
+    return dirty;
+  }
+  // 点「保存」按钮：提交 + 落库 + 顶部 Message 反馈
+  function saveReport(){
+    if(commitReport()){ save(); notify("周报已保存","本周周报内容已写入服务端。"); }
+  }
+  // 离开当前周前的自动保存：有改动就提交并落库。
+  // ⚠️ sync=true 用于会真正卸载页面的跳转（返回主页）——fetch 会被页面卸载取消，必须走同步 XHR；
+  //    sync=false 用于页面内的跳周，普通异步落盘即可。
+  function autoSaveBeforeLeave(sync){
+    if(commitReport()){ if(sync) flushSaveSync(); else flushSaveNow(); return true; }
+    return false;
+  }
+
+  function renderReport(){
+    var wr=weekRange(state.viewWeek);
+    // ⚠️ 统计区间提示已移除
+    var box=document.getElementById("reportBox");
+    var saved=state.reports[state.viewWeek];
+    var hasSaved=(saved!==undefined && saved!==null);   // 该周是否已有已保存的周报
+    // ⚠️ 自动生成的空模板只渲染进编辑框、不写入 state.reports：
+    //    写进 state 后会被任何一次全量快照 save() 顺带落库（曾凭空多出 09-07/10-26 空日报）；
+    //    用户真正输入时 input 事件才会把「模板+修改」一起写入并 save()，生成周报按钮同理。
+    if(!hasSaved){ saved=generateReportHTML(wr); }
+    // 「自动生成」按钮始终可点：该周已有周报时点击会先弹确认（重新生成将覆盖手动修改），见 genBtn 绑定处
+    var gb=document.getElementById("genBtn");
+    if(gb){ gb.title=hasSaved ? "本周周报已生成，重新生成将覆盖手动修改的内容" : "按本周看板数据自动生成周报"; }
+    // ⚠️ 编辑态下绝不重绘编辑框：期间任何 refreshAll（如新增/删除任务）都会覆盖掉未保存的草稿
+    if(!reportEditing){ box.innerHTML=saved; }
+    updateEditBtn();   // 每次重渲染都同步一次按钮与工具栏状态
+  }
+  // 其他关注点：不设独立输入模块，直接作为周报默认内容由编辑器承载（见 generateReportHTML）
+  function renderNext(){
+    var key=nextWeekKey(), wr=weekRange(key);
+    var rng=document.getElementById("nextWeekRange");
+    if(rng) rng.textContent="所属周："+wr.mon+" ~ "+wr.sun+"（即当前周之后的一周，随上方周切换联动）";
+    var box=document.getElementById("nextList"); box.innerHTML="";
+    var list=state.next[key]||[];
+    var ncEl=document.getElementById("nextCount"); if(ncEl) ncEl.textContent=list.length+" 条";
+    if(!list.length){
+      box.appendChild(el('<div class="empty-illu">'+EMPTY_CLOUD+'<div class="t">还没有下周计划</div><div class="s">在下表添加任务，会同步到下周看板「未完成」列。</div></div>'));
+      return;
+    }
+    list.forEach(function(it){
+      var row=el('<div class="item"></div>');
+      var body=el('<div class="body"></div>');
+      body.appendChild(el('<div class="ct">'+esc(it.content)+'</div>'));
+      var sub='';
+      if(it.priority) sub+='<span class="tag '+it.priority.toLowerCase()+'">'+esc(it.priority)+'</span>';
+      sub+='<span class="tag proj">'+esc(it.project||"未分类")+'</span>';
+      if(it.date) sub+='<span>'+esc(it.date)+'</span>';
+      body.appendChild(el('<div class="sub">'+sub+'</div>'));
+      var act=el('<div class="act"></div>');
+      var del=el('<button class="iconbtn" title="删除">'+TRASH+'</button>');
+      del.addEventListener("click",function(){ removeNext(it.id); });
+      act.appendChild(del);
+      row.appendChild(body); row.appendChild(act);
+      box.appendChild(row);
+    });
+  }
+
+  /* ---------- 统一刷新入口 ---------- */
+  function refreshAll(){
+    renderWeekNav(); renderStats(); renderKanban();
+    renderReport(); renderNext();
+  }
+
+  /* ---------- 事件处理 ---------- */
+  function setStatus(id, st){
+    var it=find(state.items,id); if(!it) return;
+    var from=it.status; if(from===st) return;   // 同列拖放不触发流转
+    var T=todayStr();
+    // ⚠️ 状态流转日期规则（2026-09-04 用户定稿，六条转移逐条对应）：
+    // doingAt = 最近一次「进入进行中/直接完成」的起点；doneAt = 完成日；月历按 doingAt→doneAt|今天 画连续条。
+    if(st==="doing"){
+      if(from==="done"){ it.doneAt=""; }        // ④ 已完成→进行中：清 doneAt，doingAt 不变
+      else{ it.doingAt=T; }                     // ① 未完成→进行中：doingAt=今天
+    }else if(st==="done"){
+      it.doneAt=T;                              // ③ 进行中→已完成：doneAt=今天，doingAt 保留
+      if(from==="todo"){ it.doingAt=T; }        // ⑥ 未完成→已完成：doingAt=doneAt=今天
+    }else{
+      it.doingAt=""; it.doneAt="";              // ②⑤ →未完成：清 doingAt（done 而来的还清 doneAt）
+    }
+    it.status=st; save(); refreshAll();
+  }
+  function openEditItem(id){
+    var it=find(state.items,id); if(!it) return;
+    var modal=document.getElementById("editModal");
+    document.getElementById("editContent").value=it.content||"";
+    document.getElementById("editProject").value=it.project||"";
+    document.getElementById("editDate").value=it.date||todayStr();
+    document.getElementById("editPriority").value=it.priority||"P1";
+    modal.dataset.itemId=id;
+    modal.classList.add("open");
+    document.getElementById("editContent").focus();
+  }
+  function closeEditItem(){
+    var modal=document.getElementById("editModal");
+    modal.classList.remove("open");
+    delete modal.dataset.itemId;
+  }
+  function saveEditItem(){
+    var modal=document.getElementById("editModal"), it=find(state.items,modal.dataset.itemId);
+    if(!it) return;
+    var content=document.getElementById("editContent").value.trim();
+    var date=document.getElementById("editDate").value;
+    if(!content || !date) return;
+    it.content=content;
+    it.project=document.getElementById("editProject").value.trim();
+    it.date=date;
+    it.priority=document.getElementById("editPriority").value;
+    syncFromItem(it);   // ⚠️ 联动：由下周计划同步来的任务，编辑后同步改下周计划表
+    save(); closeEditItem(); refreshAll();
+  }
+  // 下周计划 <-> 看板联动维护：由计划同步生成的看板任务带 srcNext 指回计划 id，
+  // 任务编辑时把内容/项目/日期/等级回写到对应计划，保持两处一致。
+  function syncFromItem(it){
+    if(!it.srcNext) return;   // 手动创建的任务没有来源计划，不处理
+    for(var wk in state.next){
+      var p=find(state.next[wk], it.srcNext);
+      if(p){ p.content=it.content; p.project=it.project; p.date=it.date; p.priority=it.priority; return; }
+    }
+  }
+  function removeItem(id){
+    var it=find(state.items,id); if(!it) return;
+    // ⚠️ 联动删除提示：来源自下周计划的任务，删除时计划一并删除（文案提前告知）
+    var msg=it.srcNext
+      ? "确定删除这条工作记录吗？其关联的下周计划也会一并删除，此操作不可撤销。"
+      : "确定删除这条工作记录吗？此操作不可撤销。";
+    openConfirm(msg, function(){
+      state.items=state.items.filter(function(x){return x.id!==id;});
+      if(it.srcNext){   // 联动：把下周计划里对应的那条也删掉
+        for(var wk in state.next){ state.next[wk]=state.next[wk].filter(function(x){return x.id!==it.srcNext;}); }
+      }
+      save(); refreshAll();
+    });
+  }
+  // 通用确认弹窗：标题 + 文案 + 确认按钮文字 + 确认回调，替代原生 window.confirm
+  // ⚠️ 标题/按钮文字不传时回落到删除场景的默认值（删除/删除确认），兼容早期两处删除调用
+  var confirmCb=null;   // ⚠️ 仅在弹窗打开期间持有回调，关闭时置 null 防止误触发
+  function openConfirm(msg,cb,title,okText){
+    confirmCb=cb;
+    document.getElementById("confirmMsg").textContent=msg;
+    document.getElementById("confirmModalTitle").textContent=title||"删除确认";
+    document.getElementById("confirmOkBtn").textContent=okText||"删除";
+    document.getElementById("confirmModal").classList.add("open");
+    document.getElementById("confirmOkBtn").focus();
+  }
+  function closeConfirm(){
+    confirmCb=null;
+    document.getElementById("confirmModal").classList.remove("open");
+  }
+  // 插入链接弹窗（自绘，替代原生 prompt）：openLinkPrompt(cb) 把用户填的 URL 交给回调
+  var linkCb=null;
+  function openLinkPrompt(cb){
+    linkCb=cb;
+    var inp=document.getElementById("linkUrlInput");
+    inp.value="https://";
+    document.getElementById("linkModal").classList.add("open");
+    inp.focus(); inp.select();
+  }
+  function closeLinkPrompt(){
+    linkCb=null;
+    document.getElementById("linkModal").classList.remove("open");
+  }
+  function submitLinkPrompt(){
+    var cb=linkCb, url=document.getElementById("linkUrlInput").value||"";
+    closeLinkPrompt();
+    if(cb) cb(url);
+  }
+
+  /* ---------- 自绘日期选择器（2026-09-05）----------
+     ⚠️ 原生 <input type="date"> 的弹层由浏览器绘制，布局改不了（accent-color 仅能改色）。
+        方案：输入框改 text + readonly（原生弹层永不弹出）+ 自绘浮层接管选日期。
+        readonly 的 input 仍可 focus/click/键盘操作，表单 required 校验照常生效。 */
+  var dpInput=null;          // 当前绑定的输入框（关闭时置空）
+  var dpCur={y:0, m:0};      // 浮层当前显示的年月
+
+  function dpIsOpen(){ var p=document.getElementById("datePicker"); return !!p && !p.hasAttribute("hidden"); }
+  function closeDatePicker(){
+    var p=document.getElementById("datePicker");
+    if(p) p.setAttribute("hidden","");
+    dpInput=null;
+  }
+  function renderDatePicker(){
+    var p=document.getElementById("datePicker"); if(!p) return;
+    var y=dpCur.y, m=dpCur.m, first=new Date(y,m,1);
+    var offset=(first.getDay()+6)%7;                    // 周一为首列
+    var days=new Date(y,m+1,0).getDate(), prevDays=new Date(y,m,0).getDate();
+    var total=Math.ceil((offset+days)/7)*7;
+    var todayS=todayStr(), sel=dpInput?(dpInput.value||"").trim():"";
+    document.getElementById("dpTitle").textContent=y+"年"+(m+1)+"月";
+    var html="";
+    for(var i=0;i<total;i++){
+      var n=i-offset+1, d, muted=false;
+      if(n<1){ d=new Date(y,m-1,prevDays+n); muted=true; }
+      else if(n>days){ d=new Date(y,m+1,n-days); muted=true; }
+      else d=new Date(y,m,n);
+      var ds=fmt(d);
+      html+='<button type="button" class="dp-day'+(muted?" muted":"")+(ds===todayS?" today":"")+(ds===sel?" sel":"")+'" data-dp-day="'+ds+'">'+d.getDate()+'</button>';
+    }
+    document.getElementById("dpGrid").innerHTML=html;
+  }
+  // fixed 定位：优先贴输入框下方，下方空间不足则上翻；左右夹在视口内
+  function positionDatePicker(input){
+    var p=document.getElementById("datePicker"); if(!p) return;
+    var r=input.getBoundingClientRect();
+    var w=p.offsetWidth, h=p.offsetHeight;
+    var left=Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth-w-8));
+    var top=r.bottom+6;
+    if(top+h>window.innerHeight-8) top=Math.max(8, r.top-h-6);
+    p.style.left=left+"px"; p.style.top=top+"px";
+  }
+  function openDatePicker(input){
+    var p=document.getElementById("datePicker");
+    if(!p || !input) return;
+    if(csIsOpen()) closeSelectPicker();            // 两个浮层互斥，避免叠在一起
+    dpInput=input;
+    var v=(input.value||"").trim();
+    var base=/^\d{4}-\d{2}-\d{2}$/.test(v) ? parse(v) : new Date();
+    dpCur={y:base.getFullYear(), m:base.getMonth()};
+    renderDatePicker();
+    p.removeAttribute("hidden");
+    positionDatePicker(input);       // ⚠️ 必须在显形后量测，隐藏态 offsetHeight 为 0
+  }
+  function dpShiftMonth(delta){
+    var m=dpCur.m+delta, y=dpCur.y;
+    if(m<0){ m=11; y--; } else if(m>11){ m=0; y++; }
+    dpCur={y:y, m:m};
+    renderDatePicker();
+    if(dpInput) positionDatePicker(dpInput);   // 网格行数变化会改高度，重定位
+  }
+  function dpPick(ds){
+    if(dpInput){
+      dpInput.value=ds;
+      dpInput.dispatchEvent(new Event("change",{bubbles:true}));   // 让依赖 change 的逻辑照常触发
+    }
+    closeDatePicker();
+  }
+  // 把一个 readonly 文本输入框接入日期选择器
+  function bindDatePicker(input){
+    if(!input) return;
+    input.classList.add("dp-input");
+    input.addEventListener("click",function(){ openDatePicker(input); });
+    input.addEventListener("keydown",function(e){
+      if(e.key==="Enter"||e.key===" "||e.key==="ArrowDown"){ e.preventDefault(); openDatePicker(input); }
+    });
+  }
+
+  /* ---------- 自绘下拉选择器（2026-09-05）----------
+     ⚠️ 原生 <select> 展开后的 option 列表由浏览器绘制，圆角 / 荧光绿选中块全都改不了。
+        与日期选择器同一套路：原生 select 只留「值 + required 校验」，
+        mousedown 里 preventDefault 阻断原生弹层，选项列表由 JS 从 <option> 重绘到 #selectPicker。
+        好处：sel.value / change 事件 / 表单必填校验全部照旧，现有业务代码零改动。 */
+  var csSel=null;      // 当前展开的原生 select（关闭时置空）
+  var csIdx=-1;        // 浮层里键盘高亮项的序号（-1 = 未高亮）
+  var CS_TICK='<svg class="cs-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5L9.5 17 4 11.5"/></svg>';
+  function csIsOpen(){ var p=document.getElementById("selectPicker"); return !!p && !p.hasAttribute("hidden"); }
+  function closeSelectPicker(){
+    var p=document.getElementById("selectPicker");
+    if(p) p.setAttribute("hidden","");
+    if(csSel) csSel.classList.remove("is-open");
+    csSel=null; csIdx=-1;
+  }
+  // 可选项 = 非 disabled 的 <option>（「等级」这类占位项是 disabled，不进列表）
+  function csOptions(){
+    return csSel ? Array.prototype.filter.call(csSel.options,function(o){ return !o.disabled; }) : [];
+  }
+  function renderSelectPicker(){
+    var p=document.getElementById("selectPicker"); if(!p||!csSel) return;
+    var cur=csSel.value, html="";
+    csOptions().forEach(function(o,i){
+      html+='<button type="button" class="cs-opt'+(o.value===cur?" sel":"")+(i===csIdx?" is-active":"")
+           +'" role="option" data-cs-idx="'+i+'"><span>'+esc(o.text)+'</span>'+CS_TICK+'</button>';
+    });
+    document.getElementById("csList").innerHTML=html;
+  }
+  // fixed 定位：优先贴触发器下方，下方空间不足则上翻；左右夹在视口内
+  function positionSelectPicker(){
+    var p=document.getElementById("selectPicker"); if(!p||!csSel) return;
+    var r=csSel.getBoundingClientRect();
+    p.style.minWidth=r.width+"px";                 // 浮层不窄于触发器，视觉对齐
+    var w=p.offsetWidth, h=p.offsetHeight;         // ⚠️ 必须在显形后量测，隐藏态 offsetHeight 为 0
+    var left=Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth-w-8));
+    var top=r.bottom+6;
+    if(top+h>window.innerHeight-8) top=Math.max(8, r.top-h-6);
+    p.style.left=left+"px"; p.style.top=top+"px";
+  }
+  function openSelectPicker(sel){
+    var p=document.getElementById("selectPicker");
+    if(!p||!sel) return;
+    if(dpIsOpen()) closeDatePicker();              // 两个浮层互斥，避免叠在一起
+    if(csIsOpen()) closeSelectPicker();
+    csSel=sel; sel.classList.add("is-open");
+    csIdx=Math.max(0, csOptions().indexOf(sel.options[sel.selectedIndex]));
+    renderSelectPicker();
+    p.removeAttribute("hidden");
+    positionSelectPicker();
+  }
+  function csPickIdx(i){
+    var list=csOptions(); if(!csSel || i<0 || i>=list.length) return;
+    csSel.value=list[i].value;
+    csSel.dispatchEvent(new Event("change",{bubbles:true}));   // 让依赖 change 的逻辑照常触发
+    syncSelectLabel(csSel);
+    closeSelectPicker();
+  }
+  function csMove(delta){
+    var n=csOptions().length; if(!n) return;
+    csIdx=((csIdx<0?0:csIdx)+delta+n)%n;
+    renderSelectPicker();
+  }
+  // 占位项（value="" 或 disabled）用浅灰文字，与真实选项区分
+  function syncSelectLabel(sel){
+    if(!sel) return;
+    var o=sel.options[sel.selectedIndex];
+    sel.classList.toggle("is-placeholder", !!o && (o.value===""||o.disabled));
+  }
+  function bindCustomSelect(sel){
+    if(!sel || sel.dataset.csBound) return;
+    sel.dataset.csBound="1";
+    sel.classList.add("cs-sel");
+    syncSelectLabel(sel);
+    sel.addEventListener("mousedown",function(e){
+      e.preventDefault();          // ⚠️ 阻断原生弹层：不拦的话浏览器会再弹一版原生下拉
+      sel.focus();
+      if(csSel===sel && csIsOpen()) closeSelectPicker(); else openSelectPicker(sel);
+    });
+    sel.addEventListener("keydown",function(e){
+      // ⚠️ 上下键一律 preventDefault：不拦的话原生 select 会自己改值，与浮层高亮脱节
+      if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+        e.preventDefault();
+        if(csSel===sel && csIsOpen()) csMove(e.key==="ArrowDown"?1:-1); else openSelectPicker(sel);
+      }else if(e.key==="Enter"||e.key===" "){
+        e.preventDefault();
+        if(csSel===sel && csIsOpen()) csPickIdx(csIdx); else openSelectPicker(sel);
+      }
+    });
+    sel.addEventListener("change",function(){ syncSelectLabel(sel); });
+  }
+  // ⚠️ 自绘弹窗的输入框会抢走焦点，导致 contenteditable 选区丢失、execCommand 失效。
+  //    打开前存下 Range，执行前还原。
+  var savedSel=null;
+  function saveSelection(){
+    savedSel=null;
+    try{
+      var s=window.getSelection();
+      if(s && s.rangeCount>0) savedSel=s.getRangeAt(0).cloneRange();
+    }catch(e){}
+  }
+  function restoreSelection(){
+    if(!savedSel) return;
+    try{
+      var ed=document.getElementById("reportBox"); if(ed) ed.focus();
+      var s=window.getSelection(); s.removeAllRanges(); s.addRange(savedSel);
+    }catch(e){}
+    savedSel=null;
+  }
+  // 下周计划添加任务：写入 next 的同时，按表单填写的日期/等级同步到下一周看板「未完成」列
+  // （⚠️ 不硬编码默认值：日期与等级均由用户在下周计划表单中填写后传入）
+  function syncNextToKanban(c, project, date, priority){
+    var key=nextWeekKey(); if(!state.next[key]) state.next[key]=[];
+    var nid=uid();
+    state.next[key].push({id:nid, content:c, project:project, date:date, priority:priority});
+    state.items.push({id:uid(), content:c, project:project, priority:priority, status:"todo", date:date, doingAt:"", doneAt:"", srcNext:nid});
+    return nid;
+  }
+  function removeNext(id){
+    openConfirm("确定删除这条下周计划吗？其同步到看板的未完成任务也会一并删除。", function(){
+      var key=nextWeekKey(); if(!state.next[key]) return;
+      state.next[key]=state.next[key].filter(function(x){return x.id!==id;});
+      // 联动：删除计划时，一并删除由它同步进下一周看板的未完成任务
+      state.items=state.items.filter(function(x){return x.srcNext!==id;});
+      save(); refreshAll();
+    });
+  }
+  function find(arr,id){ for(var i=0;i<arr.length;i++){ if(arr[i].id===id) return arr[i]; } return null; }
+
+  function bind(){
+    document.getElementById("addForm").addEventListener("submit",function(e){
+      e.preventDefault();
+      var c=document.getElementById("fContent").value.trim(); if(!c) return;
+      var d=document.getElementById("fDate").value||todayStr();
+      state.items.push({id:uid(),content:c,project:document.getElementById("fProject").value.trim(),priority:document.getElementById("fPriority").value,status:"todo",date:d,doingAt:"",doneAt:""});
+      save(); refreshAll();
+      document.getElementById("fContent").value=""; document.getElementById("fProject").value="";
+    });
+    document.getElementById("editForm").addEventListener("submit",function(e){
+      e.preventDefault(); saveEditItem();
+    });
+    document.getElementById("editCancelBtn").addEventListener("click",closeEditItem);
+    document.getElementById("editCloseBtn").addEventListener("click",closeEditItem);
+    document.getElementById("editModal").addEventListener("click",function(e){
+      if(e.target===this) closeEditItem();
+    });
+    // 删除确认弹窗：确认执行回调 / 取消与点遮罩关闭
+    document.getElementById("confirmOkBtn").addEventListener("click",function(){
+      var cb=confirmCb; closeConfirm(); if(cb) cb();
+    });
+    document.getElementById("confirmCancelBtn").addEventListener("click",closeConfirm);
+    document.getElementById("confirmModal").addEventListener("click",function(e){
+      if(e.target===this) closeConfirm();
+    });
+    // 插入链接弹窗：确定/取消/点遮罩/Esc 关闭，回车直接提交
+    document.getElementById("linkOkBtn").addEventListener("click",submitLinkPrompt);
+    document.getElementById("linkCancelBtn").addEventListener("click",closeLinkPrompt);
+    document.getElementById("linkModal").addEventListener("click",function(e){
+      if(e.target===this) closeLinkPrompt();
+    });
+    document.getElementById("linkUrlInput").addEventListener("keydown",function(e){
+      if(e.key==="Enter"){ e.preventDefault(); submitLinkPrompt(); }
+    });
+    // 日期选择器浮层：mousedown 阻止默认行为 —— 不抢焦点，保护 contenteditable 选区与弹窗内输入
+    var dpEl=document.getElementById("datePicker");
+    dpEl.addEventListener("mousedown",function(e){ e.preventDefault(); });
+    dpEl.addEventListener("click",function(e){
+      var nav=e.target.closest("[data-dp-nav]");
+      if(nav){ dpShiftMonth(parseInt(nav.getAttribute("data-dp-nav"),10)); return; }
+      var day=e.target.closest("[data-dp-day]");
+      if(day){ dpPick(day.getAttribute("data-dp-day")); }
+    });
+    document.getElementById("dpTodayBtn").addEventListener("click",function(){ dpPick(todayStr()); });
+    document.getElementById("dpClearBtn").addEventListener("click",function(){
+      if(dpInput){ dpInput.value=""; dpInput.dispatchEvent(new Event("change",{bubbles:true})); }
+      closeDatePicker();
+    });
+    // 自绘下拉浮层：mousedown 阻断默认行为（保住 contenteditable 选区），click 取选项序号
+    var csEl=document.getElementById("selectPicker");
+    csEl.addEventListener("mousedown",function(e){ e.preventDefault(); });
+    csEl.addEventListener("click",function(e){
+      var opt=e.target.closest("[data-cs-idx]");
+      if(opt) csPickIdx(parseInt(opt.getAttribute("data-cs-idx"),10));
+    });
+    // 点击浮层与已绑定输入框之外的地方即关闭（用 mousedown，早于 click 生效）
+    document.addEventListener("mousedown",function(e){
+      if(!dpIsOpen()) return;
+      if(e.target.closest("#datePicker") || e.target.closest(".dp-input")) return;
+      closeDatePicker();
+    });
+    // 自绘下拉：点击浮层与已绑定 select 之外的地方即关闭（同样用 mousedown）
+    document.addEventListener("mousedown",function(e){
+      if(!csIsOpen()) return;
+      if(e.target.closest("#selectPicker") || e.target.closest("select.cs-sel")) return;
+      closeSelectPicker();
+    });
+    // 窗口尺寸变化会让 fixed 浮层错位，打开时直接关闭（重开即可，不必实时跟随）
+    window.addEventListener("resize",function(){
+      if(dpIsOpen()) closeDatePicker();
+      if(csIsOpen()) closeSelectPicker();
+    });
+    // ⚠️ 看板列(.kbody) 可滚动：滚动会让 fixed 浮层与触发器脱节，捕获阶段一律关掉
+    window.addEventListener("scroll",function(){
+      if(csIsOpen()) closeSelectPicker();
+      if(dpIsOpen()) closeDatePicker();
+    },true);
+    document.addEventListener("keydown",function(e){
+      if(e.key==="Escape"){
+        // ⚠️ 浮层优先：编辑弹窗里日历/下拉开着时按 Esc，只收浮层、不关弹窗
+        if(dpIsOpen()){ closeDatePicker(); return; }
+        if(csIsOpen()){ closeSelectPicker(); return; }
+        closeEditItem(); closeConfirm(); closeLinkPrompt();
+      }
+    });
+    document.getElementById("nextForm").addEventListener("submit",function(e){
+      e.preventDefault();
+      var c=document.getElementById("nContent").value.trim(); if(!c) return;
+      var p=document.getElementById("nProject").value.trim();
+      var d=document.getElementById("nDate").value;      // 计划日期：用户填写
+      var pr=document.getElementById("nPriority").value; // 等级：用户选择
+      if(!d || !pr) return; // 原生 required 已拦截，双保险
+      // 自动同步：计划写入下周计划，同时按填写的日期/等级落到看板「未完成」列
+      syncNextToKanban(c, p, d, pr);
+      save(); refreshAll();
+      document.getElementById("nContent").value=""; document.getElementById("nProject").value="";
+      document.getElementById("nDate").value=""; document.getElementById("nPriority").value="";
+    });
+    document.getElementById("genBtn").addEventListener("click",function(){
+      // ⚠️ 编辑中点「自动生成」：先把草稿提交进 state，才能让下面的「已有周报」判定与覆盖确认生效
+      commitReport();
+      var wr=weekRange(state.viewWeek);
+      // 该周已有已保存周报 → 先弹自绘确认：重新生成会覆盖手动修改的部分；未生成过则直接生成
+      var doGen=function(){
+        var t=generateReportHTML(wr);
+        state.reports[state.viewWeek]=t; save(); document.getElementById("reportBox").innerHTML=t;
+        var tip=document.getElementById("copyTip"); tip.textContent="已按本周数据重新生成"; setTimeout(function(){tip.textContent="";},2000);
+      };
+      if(state.reports[state.viewWeek]!==undefined && state.reports[state.viewWeek]!==null){
+        openConfirm("本周周报已生成。重新生成将按本周看板数据覆盖已保存的内容（含手动修改的部分），确定继续吗？", doGen, "重新生成确认", "重新生成");
+      }else{
+        doGen();
+      }
+    });
+    // 富文本编辑框：编辑态下只标记「有改动」，不写 state 也不落库
+    // ⚠️ 这样直接关闭/刷新页面就等于丢弃草稿；真正落库在点「保存」或离开当前周时
+    document.getElementById("reportBox").addEventListener("input",function(){
+      if(reportEditing){ reportDirty=true; return; }
+      state.reports[state.viewWeek]=this.innerHTML; save();   // 兜底：非编辑态理论上不会触发
+    });
+    // 「编辑 / 保存」切换按钮：只读态显示「编辑」，编辑态显示「保存」
+    document.getElementById("editSaveBtn").addEventListener("click",function(){
+      if(reportEditing) saveReport(); else setReportEditable(true);
+    });
+    // 返回主页：有未保存改动先自动保存（同步落盘，否则页面卸载会取消请求）再跳转
+    Array.prototype.forEach.call(document.querySelectorAll('a[href="/"]'),function(a){
+      a.addEventListener("click",function(){ autoSaveBeforeLeave(true); });
+    });
+    // 编辑区内点击：链接 → 新标签页打开；图片 → 灯箱放大预览（contenteditable 默认不跳转）
+    document.getElementById("reportBox").addEventListener("click",function(e){
+      var n=e.target;
+      while(n && n!==this){
+        if(n.tagName==="A" && n.href){ e.preventDefault(); window.open(n.href,"_blank"); return; }
+        if(n.tagName==="IMG"){ e.preventDefault(); openLightbox(n.src); return; }
+        n=n.parentNode;
+      }
+    });
+    // 富文本工具栏
+    Array.prototype.forEach.call(document.querySelectorAll(".rte-btn[data-cmd]"),function(b){
+      b.addEventListener("mousedown",function(e){ e.preventDefault(); }); // 保持编辑区焦点/选区
+      b.addEventListener("click",function(){
+        if(!reportEditing) return;      // ⚠️ 只读态下工具栏整体失效（外层已置灰，这里是双保险）
+        var cmd=this.dataset.cmd;
+        // 超链接：先选中文字再点「链接」，弹自绘输入框填 URL；无协议自动补 https://
+        if(cmd==="createLink"){
+          saveSelection();
+          openLinkPrompt(function(url){
+            if(!url) return;
+            url=url.trim(); if(!url || url==="https://") return;
+            if(!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) url="https://"+url;
+            restoreSelection();          // ⚠️ 弹窗抢走过焦点，execCommand 前必须还原选区
+            document.execCommand("createLink",false,url);
+          });
+          return;
+        }
+        if(cmd==="unlink"){ document.execCommand("unlink",false,null); return; }
+        // 高亮：styleWithCSS 开启后 hiliteColor 给选中文字加背景；若选中内容已带背景色则清除（toggle）
+        if(cmd==="hiliteColor"){
+          document.execCommand("styleWithCSS",false,true);
+          var sel=window.getSelection(), hi=false;
+          if(sel && sel.rangeCount){
+            var r=sel.getRangeAt(0);
+            if(!r.collapsed){
+              var el0=r.startContainer.nodeType===1?r.startContainer:r.startContainer.parentElement;
+              var el=el0;
+              while(el && el!==document.body){
+                var bg=(el.style&&el.style.backgroundColor)||"";
+                if(bg && bg!=="transparent" && bg!=="rgba(0, 0, 0, 0)"){ hi=true; break; }
+                el=el.parentElement;
+              }
+            }
+          }
+          document.execCommand("hiliteColor",false,hi?"transparent":"#e8f4a0");
+          return;
+        }
+        if(cmd==="formatBlock"){ document.execCommand("formatBlock",false,this.dataset.val); }
+        else { document.execCommand(cmd,false,null); }
+      });
+    });
+    // 图片放大预览灯箱：打开（点图片）/ 关闭（点遮罩或 Esc）
+    var lightbox=document.getElementById("lightbox"), lightboxImg=document.getElementById("lightboxImg");
+    function openLightbox(src){ lightboxImg.src=src; lightbox.classList.add("open"); }
+    function closeLightbox(){ lightbox.classList.remove("open"); lightboxImg.src=""; }
+    lightbox.addEventListener("click",closeLightbox);
+    document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeLightbox(); });
+    // 统一图片插入：base64 内联 + 图片段及后随空段都强制 text-align:left，
+    // ⚠️ 切断 execCommand justify 的对齐状态继承（对齐会"黏"在块上并传给新行）；
+    // 光标自动落到图片后的空段，直接输入即为左对齐文本
+    function insertImage(dataUrl,alt,range){
+      var ed=document.getElementById("reportBox");
+      ed.focus();
+      if(range){ var sel0=window.getSelection(); sel0.removeAllRanges(); sel0.addRange(range); } // 恢复粘贴前光标位置
+      document.execCommand("insertHTML",false,'<p style="text-align:left"><img src="'+dataUrl+'" alt="'+esc(alt)+'"></p><p style="text-align:left"><br></p>');
+      var imgs=ed.querySelectorAll("img"), img=imgs[imgs.length-1];
+      if(img){ // 把光标移到图片后随的新空段落
+        var nxt=img.parentNode.nextElementSibling;
+        var sel=window.getSelection(), r=document.createRange();
+        if(nxt){ r.setStart(nxt,0); r.collapse(true); }
+        else { r.setStartAfter(img.parentNode); r.collapse(true); }
+        sel.removeAllRanges(); sel.addRange(r);
+      }
+      reportDirty=true;   // 编辑态下插入图片只标脏（execCommand 也会触发 input，这里显式再标一次）
+    }
+    document.getElementById("imgBtn").addEventListener("click",function(){ if(!reportEditing) return; document.getElementById("imgFile").click(); });
+    document.getElementById("imgFile").addEventListener("change",function(e){
+      if(!reportEditing) return;
+      var file=e.target.files[0]; if(!file) return;
+      var reader=new FileReader();
+      reader.onload=function(){ insertImage(reader.result,file.name); };
+      reader.readAsDataURL(file); e.target.value="";
+    });
+    // 粘贴图片（如从飞书/网页复制）：剪贴板里有图片数据时，转 base64 内联后插入，避免保留会失效的外部链接
+    document.getElementById("reportBox").addEventListener("paste",function(e){
+      if(!reportEditing) return;   // 只读态：不拦截，也不插入图片
+      var items=e.clipboardData&&e.clipboardData.items, img=null;
+      if(items){ for(var i=0;i<items.length;i++){ if(items[i].type.indexOf("image/")===0){ img=items[i]; break; } } }
+      if(!img) return; // 剪贴板无图片（纯文本/HTML），走浏览器默认粘贴
+      e.preventDefault(); // ⚠️ 拦截默认：否则飞书等来源的外链 <img> 会被原样贴进来，链接过期后图片丢失
+      var file=img.getAsFile&&img.getAsFile(); if(!file) return;
+      var sel=window.getSelection(), range=sel&&sel.rangeCount?sel.getRangeAt(0):null;
+      var reader=new FileReader();
+      reader.onload=function(){ insertImage(reader.result,"粘贴图片",range); };
+      reader.readAsDataURL(file);
+    });
+    // 拖入图片文件：同样转 base64 内联（多张图片逐个插入）
+    document.getElementById("reportBox").addEventListener("drop",function(e){
+      if(!reportEditing) return;   // 只读态：拖入图片不生效
+      var files=e.dataTransfer&&e.dataTransfer.files;
+      var imgs=files?Array.prototype.filter.call(files,function(f){ return f.type.indexOf("image/")===0; }):[];
+      if(!imgs.length) return; // 非图片拖放，走默认行为
+      e.preventDefault();
+      var ed=this; ed.focus();
+      imgs.forEach(function(file){
+        var reader=new FileReader();
+        reader.onload=function(){ insertImage(reader.result,file.name); };
+        reader.readAsDataURL(file);
+      });
+    });
+    // 复制周报：优先复制带格式的 HTML，失败兜底纯文本
+    document.getElementById("copyBtn").addEventListener("click",function(){
+      var box=document.getElementById("reportBox"), tip=document.getElementById("copyTip");
+      var html=box.innerHTML, text=box.innerText||"";
+      function okMsg(){ tip.textContent="已复制到剪贴板"; setTimeout(function(){tip.textContent="";},2000); }
+      if(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem){
+        try{
+          var item=new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([text],{type:'text/plain'})});
+          navigator.clipboard.write([item]).then(okMsg, function(){ fallbackCopyText(text,tip,okMsg); });
+          return;
+        }catch(e){ /* 某些环境不支持 HTML 写入，走兜底 */ }
+      }
+      fallbackCopyText(text,tip,okMsg);
+    });
+    document.getElementById("exportBtn").addEventListener("click",exportJSON);
+    document.getElementById("importBtn").addEventListener("click",function(){ document.getElementById("importFile").click(); });
+    document.getElementById("importFile").addEventListener("change",importJSON);
+    // 周导航：仅在“周一落在该月”的周区间内切换（边界禁用箭头），不再出现本周/上周跳转
+    Array.prototype.forEach.call(document.querySelectorAll(".wnav"),function(b){
+      b.addEventListener("click",function(){ if(this.disabled) return; moveWeek(Number(this.dataset.dir)); });
+    });
+    // 看板拖拽：卡片拖到某一列即把状态改为该列状态
+    Array.prototype.forEach.call(document.querySelectorAll(".kbody"),function(col){
+      col.addEventListener("dragover",function(e){ e.preventDefault(); col.classList.add("dragover"); });
+      col.addEventListener("dragleave",function(){ col.classList.remove("dragover"); });
+      col.addEventListener("drop",function(e){
+        e.preventDefault(); col.classList.remove("dragover");
+        var id=e.dataTransfer.getData("text/plain");
+        if(id) setStatus(id, col.dataset.status);
+      });
+    });
+  }
+  function fallbackCopyText(text,tip,done){
+    var ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); done(); }catch(e){ tip.textContent="复制失败，请手动选择"; }
+    document.body.removeChild(ta);
+  }
+  function exportJSON(){
+    var data={items:state.items,next:state.next,reports:state.reports,okr:state.okr,exportedAt:new Date().toISOString()};
+    var blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    var url=URL.createObjectURL(blob), a=document.createElement("a");
+    a.href=url; a.download="周报工作台备份_"+todayStr()+".json"; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+  function importJSON(e){
+    var file=e.target.files[0]; if(!file) return;
+    var reader=new FileReader();
+    reader.onload=function(){
+      try{
+        var d=JSON.parse(reader.result);
+        if(!d||!Array.isArray(d.items)) throw new Error("格式错误");
+        state.items=d.items; state.next=(d.next && typeof d.next==="object")?d.next:{};
+        if(d.reports) state.reports=d.reports; if(d.okr) state.okr=d.okr;
+        save(); refreshAll(); notify("导入成功","共 "+state.items.length+" 条工作记录。");
+      }catch(err){ notify("导入失败","文件格式不正确，请确认选择的是本工作台导出的 JSON 备份。",true); }
+    };
+    reader.readAsText(file); e.target.value="";
+  }
+
+  /* ---------- 初始化 ---------- */
+  function updateSyncBadge(){
+    var t=document.getElementById("syncText"), d=document.getElementById("syncDot"), b=document.getElementById("syncBadge");
+    if(t) t.textContent="服务已连接 · 持久化";
+    if(d) d.style.background="var(--green)";
+    if(b){ b.classList.remove("is-err"); b.title="数据由后端服务持久化到 SQLite（weekly.db），重启不丢"; }
+  }
+  function init(){
+    document.getElementById("fDate").value=todayStr();
+    // 自绘日期选择器：#fDate（本周工作）/ #nDate（下周计划）/ #editDate（编辑任务弹窗）
+    bindDatePicker(document.getElementById("fDate"));
+    bindDatePicker(document.getElementById("nDate"));
+    bindDatePicker(document.getElementById("editDate"));
+    // 自绘下拉选择器：#fPriority（本周工作）/ #nPriority（下周计划）/ #editPriority（编辑任务弹窗）
+    bindCustomSelect(document.getElementById("fPriority"));
+    bindCustomSelect(document.getElementById("nPriority"));
+    bindCustomSelect(document.getElementById("editPriority"));
+    updateSyncBadge();
+    load().then(function(){
+      // 支持从首页周链接带 ?w=YYYY-MM-DD 打开指定周
+      var w=new URLSearchParams(location.search).get("w");
+      if(w && /^\d{4}-\d{2}-\d{2}$/.test(w)){ state.viewWeek=w; save(); }
+      bind(); refreshAll();
+    }).catch(function(){ bind(); refreshAll(); });   // ⚠️ 不 seed 不回写：避免空/示例数据覆盖服务端
+  }
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init); else init();
+})();
+</script>
+</body>
+</html>
