@@ -41,9 +41,12 @@
   --up-soft:#d4ee4e57;       /* 进行中 = 浅绿（品牌 lime 的 34% 透明版，用户指定色值） */
   --down:#c0453c;            /* 逾期 / 风险 = 红 */
   --warn:#b06a1c;            /* 临期 = 琥珀 */
-  --cal-same:#BBC5FF;        /* 月历条·浅蓝（2026-09-04 定；⚠️ 2026-09-24 改版后不再引用，保留备查） */
-  --cal-xmon:#FCCD3E;        /* 月历条·橙（2026-09-04 定；现用于「已完成 · 已超期」） */
-  --cal-xmon-soft:rgba(252,205,62,.34);  /* 月历条·柔橙 = --cal-xmon 的 34% 透明版，用于「进行中 · 已超期」，与 --lime-soft 同款半透明风格 */
+  /* 月历条配色（2026-09-25 改版：不再看超期，改按任务优先级 P0/P1/P2 着色；
+     未完成 = 同色系 34% 半透明、已完成 = 实心亮色。P1 复用上方的 --lime / --lime-soft） */
+  --cal-same:#BBC5FF;        /* 淡蓝 = P2 未完成（2026-09-04 定色；2026-09-25 重新启用） */
+  --cal-blue:#6F9BFF;        /* 亮蓝 = P2 已完成（2026-09-25 新增） */
+  --cal-xmon:#FCCD3E;        /* 亮橙 = P0 已完成（2026-09-04 定色） */
+  --cal-xmon-soft:rgba(252,205,62,.34);  /* 淡橙 = P0 未完成，与 --lime-soft 同款半透明手法 */
 
   --r:20px; --r-sm:12px; --r-lg:32px;
   --shadow:0 1px 3px rgba(27,27,20,.05);
@@ -330,20 +333,25 @@ input.flex1{flex:1; min-width:160px;}
 /* 跨天/跨周连续条：直接画在日期格内部——任务覆盖到的每个格子各放一段，
    首段显示文字，跨周接续段带 ↳ 前缀，中间/尾段为无字延续条；
    段与段同高同色，跨周时在下一行接着画，视觉上自然连成一条。
-   颜色语义（2026-09-24 改版）：不再按跨度着色，改为「状态 × 是否超期」四分类 ——
-   进行中·未超期 = lime-soft（半透明柔绿）、进行中·已超期 = cal-xmon-soft（半透明柔橙）、
-   已完成·未超期 = lime（实心荧光绿）、已完成·已超期 = cal-xmon（实心橙）。
-   ⚠️ 超期口径：已完成看 doneAt > deadline（延期完成）；进行中看 今天 > deadline。
-   deadline 为空一律视为未超期。 */
+   颜色语义（2026-09-25 改版）：不再看超期，改按任务优先级着色 ——
+   P0 = 橙、P1 = 荧光绿、P2 = 蓝；已完成 = 实心亮色，未完成（进行中）= 同色系 34% 半透明柔色。
+   ⚠️ 优先级缺失或非 P0/P2 的值一律归入 P1（绿）。 */
 .cal-weekrow{grid-column:1 / -1; min-width:0;}
 .cal-seg{position:relative; display:block; height:15px; margin-top:3px; border-radius:5px;
   background:var(--lime); color:var(--accent-2); min-width:0; cursor:default;}
-/* —— 现行四分类（2026-09-24 定稿）—— */
+/* —— 现行三分类（2026-09-25 定稿）：优先级 × 是否完成 —— */
+.cal-seg.pri-p0{background:var(--cal-xmon-soft); color:var(--ink-1);}
+.cal-seg.pri-p0.done{background:var(--cal-xmon); color:var(--accent-2);}
+.cal-seg.pri-p1{background:var(--lime-soft); color:var(--ink-1);}
+.cal-seg.pri-p1.done{background:var(--lime); color:var(--accent-2);}
+.cal-seg.pri-p2{background:var(--cal-same); color:var(--ink-1);}
+.cal-seg.pri-p2.done{background:var(--cal-blue); color:var(--accent-2);}
+/* —— 旧分类一（2026-09-24「状态 × 超期」四分类）：JS 已不再产出，留档不生效 —— */
 .cal-seg.doing-ok{background:var(--lime-soft); color:var(--ink-1);}
 .cal-seg.doing-over{background:var(--cal-xmon-soft); color:var(--ink-1);}
 .cal-seg.done-ok{background:var(--lime); color:var(--accent-2);}
 .cal-seg.done-over{background:var(--cal-xmon); color:var(--accent-2);}
-/* —— 旧跨度分类（2026-09-04）：JS 已不再产出这些 class，规则留档不再生效 —— */
+/* —— 旧分类二（2026-09-04 按跨度）：JS 已不再产出这些 class，规则留档不再生效 —— */
 .cal-seg.same{background:var(--cal-same);}
 .cal-seg.xmon{background:var(--cal-xmon);}
 .cal-seg.single{background:var(--lime-soft); color:var(--ink-1);}
@@ -710,10 +718,10 @@ input.flex1{flex:1; min-width:160px;}
     var gridStart=fmt(firstCell), gridEnd=addDays(gridStart,total-1), today=todayStr();
     // 任务 → 连续条（2026-09-04 显示规则）：doing_at 为起点；
     // 有 done_at 以 done_at 为终点，没有（进行中）以当前实际日期为终点；纯未完成（无起点）不上条。
-    // 颜色语义（2026-09-24 改版）：不再按跨度区分，改为「状态 × 是否超期」四分类 ——
-    //           进行中·未超期 = lime-soft、进行中·已超期 = cal-xmon-soft、
-    //           已完成·未超期 = lime、已完成·已超期 = cal-xmon。
-    // ⚠️ 2026-09-24 起条色改按「状态 × 是否超期」分类，本函数不再被调用；
+    // 颜色语义（2026-09-25 改版）：不看超期，改按任务优先级着色 ——
+    //           P0 = 橙、P1 = 荧光绿、P2 = 蓝；已完成 = 实心亮色、未完成（进行中）= 同色系半透明柔色。
+    // ⚠️ 优先级缺失或非 P0 / P2 的值一律归入 P1（绿）。
+    // ⚠️ 2026-09-24 起条色不再按「跨度」分类，monday() 已无调用；
     //    保留以支持回退到「按跨度着色」的旧方案（CSS 里的 .same / .xmon / .single 同理）。
     function monday(ds){ var d=parse(ds); var off=(d.getDay()+6)%7; d.setDate(d.getDate()-off); return fmt(d); }
     var spans=[];
@@ -723,11 +731,9 @@ input.flex1{flex:1; min-width:160px;}
       if(e&&e<s) e=s;
       if(!e) e=today;
       if(e<gridStart||s>gridEnd) return;   // 与当前视图无交集
-      // 条色四分类（2026-09-24）：⚠️ 超期口径 —— 已完成看 doneAt > deadline（延期完成），
-      // 进行中看 今天 > deadline；deadline 为空一律视为未超期。
-      var dl=it.deadline||"";
-      var overdue=(it.status==="done") ? (!!dl && (it.doneAt||e)>dl) : (!!dl && today>dl);
-      var cat=(it.status==="done"?"done-":"doing-")+(overdue?"over":"ok");
+      // 条色三分类（2026-09-25）：按 priority 取色（缺省/异常值 → P1），已完成附加 .done 走实心亮色。
+      var pri=(it.priority||"").toUpperCase();
+      var cat="pri-"+(pri==="P0"?"p0":pri==="P2"?"p2":"p1")+(it.status==="done"?" done":"");
       spans.push({content:it.content||"(未命名)", start:s, end:e, cat:cat,
                   project:it.project||"", priority:it.priority||"", status:it.status});
     });
