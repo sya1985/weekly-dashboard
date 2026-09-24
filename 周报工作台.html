@@ -588,7 +588,7 @@ button.danger:hover{filter:brightness(.94);}
         <p class="nwr" id="nextWeekRange" data-page-node-id="mxno9YdGGKX5vVSR7BGn4z"></p>
         <form class="nform" id="nextForm" autocomplete="off" data-page-node-id="iIVR9FGDboIcWcYGaIgMPi">
           <input class="wide" id="nContent" placeholder="下周要推进的事" required data-page-node-id="OagcFXX4fGKQnsBnkpiQF2">
-          <input type="text" id="nDate" title="计划日期（同步到看板）" readonly placeholder="选择日期" autocomplete="off" required data-page-node-id="8xChof99DeQehcIyISCIG6">
+          <input type="text" id="nDate" title="截止日期（同步到看板）" readonly placeholder="选择截止日期" autocomplete="off" required data-page-node-id="8xChof99DeQehcIyISCIG6">
           <select id="nPriority" required data-page-node-id="Hn1M2ApmgREJF50jM0rtC6">
             <option value="" disabled selected data-page-node-id="OIriwb9kmpQFwanBQvrJb3">等级</option>
             <option value="P0" data-page-node-id="QifzXGeB8sGmsCvduukHuJ">P0</option>
@@ -624,8 +624,8 @@ button.danger:hover{filter:brightness(.94);}
         <input id="editProject" type="text" data-page-node-id="CFuBJN9Lsj0F3rPcdhnytZ">
       </label>
       <div class="edit-row" data-page-node-id="SypKRRk5JzkifOUYqf2DfJ">
-        <label data-page-node-id="fFVF38rjBeouF66YJAbv5O">日期
-          <input id="editDate" type="text" readonly placeholder="选择日期" autocomplete="off" required data-page-node-id="xHjHXXi5sAyQwmgE14CHeY">
+        <label data-page-node-id="fFVF38rjBeouF66YJAbv5O">截止日期
+          <input id="editDate" type="text" readonly placeholder="选择截止日期" autocomplete="off" required data-page-node-id="xHjHXXi5sAyQwmgE14CHeY">
         </label>
         <label data-page-node-id="4Z7Znm2ACetubWp4lL0J4K">优先级
           <select id="editPriority" required data-page-node-id="7K2dLF4zwQQZEiO9i9gXkb">
@@ -633,6 +633,16 @@ button.danger:hover{filter:brightness(.94);}
             <option value="P1" data-page-node-id="d3qtppY06AhrvphItjRDBE">P1</option>
             <option value="P2" data-page-node-id="W9S4dbmuV5J7CU3KTXtHCL">P2</option>
           </select>
+        </label>
+      </div>
+      <!-- 开始 / 结束时间：可手填（清除按钮置空）。
+           ⚠️ 两者仍会被状态流转覆盖——拖动卡片改状态时 setStatus 按六条规则重刷这两值。 -->
+      <div class="edit-row">
+        <label>开始时间
+          <input id="editStart" type="text" readonly placeholder="未开始" autocomplete="off">
+        </label>
+        <label>结束时间
+          <input id="editEnd" type="text" readonly placeholder="未完成" autocomplete="off">
         </label>
       </div>
       <div class="modal-actions" data-page-node-id="GYn8uVr0Thv1HvSVUj32xQ">
@@ -752,7 +762,7 @@ button.danger:hover{filter:brightness(.94);}
       // doingAt 是「进入进行中/直接完成」的起点——历史 done 缺 doingAt 时用 doneAt 补齐（起点=完成日），
       // doing 缺 doingAt 才补今天（不再像旧逻辑那样每次加载都刷新成今天，那会破坏起点语义）。
       if(it.status==="done"){
-        if(!it.doneAt){ it.doneAt=it.date||""; changed=true; }   // 缺完成日用原任务日期补齐
+        if(!it.doneAt){ it.doneAt=it.deadline||""; changed=true; }   // 缺完成日用截止日期补齐
         if(!it.doingAt){ it.doingAt=it.doneAt; changed=true; }   // 缺起点用完成日补齐
       }else if(it.status==="doing"){
         if(!it.doingAt){ it.doingAt=now; changed=true; }
@@ -864,7 +874,7 @@ button.danger:hover{filter:brightness(.94);}
     return res;
   }
   function nextWeekKey(){ return addDays(state.viewWeek, 7); }   // 当前周视图的下一周（周一）
-  function getWeekItems(wr){ return state.items.filter(function(it){ return it.date>=wr.mon && it.date<=wr.sun; }); }
+  function getWeekItems(wr){ return state.items.filter(function(it){ return it.deadline>=wr.mon && it.deadline<=wr.sun; }); }
   function monthKey(d){ return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2); }
 
   /* ---------- 渲染层（互不调用） ---------- */
@@ -908,7 +918,7 @@ button.danger:hover{filter:brightness(.94);}
   function renderKanban(){
     if(csIsOpen()) closeSelectPicker();   // ⚠️ 卡片整体重绘会摘掉触发器，浮层必须先收
     var wr=weekRange(state.viewWeek);
-    var wi=getWeekItems(wr).slice().sort(function(a,b){ return a.date<b.date?-1:(a.date>b.date?1:0); });
+    var wi=getWeekItems(wr).slice().sort(function(a,b){ return a.deadline<b.deadline?-1:(a.deadline>b.deadline?1:0); });
     var cols={ done:document.getElementById("kcol_done"),
                doing:document.getElementById("kcol_doing"),
                todo:document.getElementById("kcol_todo") };
@@ -922,7 +932,7 @@ button.danger:hover{filter:brightness(.94);}
       // 拖拽：把卡片 id 带过去，落到某列即把状态改成该列状态
       card.addEventListener("dragstart",function(e){ e.dataTransfer.setData("text/plain", it.id); });
       card.appendChild(el('<div class="ct">'+esc(it.content)+'</div>'));
-      card.appendChild(el('<div class="sub"><span class="tag '+it.priority.toLowerCase()+'">'+it.priority+'</span><span class="tag proj">'+esc(it.project||"未分类")+'</span><span>'+esc(it.date)+'</span></div>'));
+      card.appendChild(el('<div class="sub"><span class="tag '+it.priority.toLowerCase()+'">'+it.priority+'</span><span class="tag proj">'+esc(it.project||"未分类")+'</span><span>'+esc(it.deadline)+'</span></div>'));
       var foot=el('<div class="kfoot"></div>');
       var sel=el('<select class="kstatus" aria-label="更改状态"><option value="done">已完成</option><option value="doing">进行中</option><option value="todo">未完成</option></select>');
       sel.value=it.status;
@@ -1065,7 +1075,7 @@ button.danger:hover{filter:brightness(.94);}
       var sub='';
       if(it.priority) sub+='<span class="tag '+it.priority.toLowerCase()+'">'+esc(it.priority)+'</span>';
       sub+='<span class="tag proj">'+esc(it.project||"未分类")+'</span>';
-      if(it.date) sub+='<span>'+esc(it.date)+'</span>';
+      if(it.deadline) sub+='<span>'+esc(it.deadline)+'</span>';
       body.appendChild(el('<div class="sub">'+sub+'</div>'));
       var act=el('<div class="act"></div>');
       var del=el('<button class="iconbtn" title="删除">'+TRASH+'</button>');
@@ -1105,7 +1115,9 @@ button.danger:hover{filter:brightness(.94);}
     var modal=document.getElementById("editModal");
     document.getElementById("editContent").value=it.content||"";
     document.getElementById("editProject").value=it.project||"";
-    document.getElementById("editDate").value=it.date||todayStr();
+    document.getElementById("editDate").value=it.deadline||todayStr();
+    document.getElementById("editStart").value=it.doingAt||"";   // 开始时间可为空（未开始）
+    document.getElementById("editEnd").value=it.doneAt||"";       // 结束时间可为空（未完成）
     document.getElementById("editPriority").value=it.priority||"P1";
     modal.dataset.itemId=id;
     modal.classList.add("open");
@@ -1120,12 +1132,15 @@ button.danger:hover{filter:brightness(.94);}
     var modal=document.getElementById("editModal"), it=find(state.items,modal.dataset.itemId);
     if(!it) return;
     var content=document.getElementById("editContent").value.trim();
-    var date=document.getElementById("editDate").value;
-    if(!content || !date) return;
+    var deadline=document.getElementById("editDate").value;
+    if(!content || !deadline) return;   // ⚠️ 截止日期必填：归周与逾期判定都依赖它
     it.content=content;
     it.project=document.getElementById("editProject").value.trim();
-    it.date=date;
+    it.deadline=deadline;
     it.priority=document.getElementById("editPriority").value;
+    // 开始 / 结束时间可留空（未开始 / 未完成），不做必填校验；浮层「清除」按钮可置空
+    it.doingAt=document.getElementById("editStart").value||"";
+    it.doneAt=document.getElementById("editEnd").value||"";
     syncFromItem(it);   // ⚠️ 联动：由下周计划同步来的任务，编辑后同步改下周计划表
     save(); closeEditItem(); refreshAll();
   }
@@ -1135,7 +1150,7 @@ button.danger:hover{filter:brightness(.94);}
     if(!it.srcNext) return;   // 手动创建的任务没有来源计划，不处理
     for(var wk in state.next){
       var p=find(state.next[wk], it.srcNext);
-      if(p){ p.content=it.content; p.project=it.project; p.date=it.date; p.priority=it.priority; return; }
+      if(p){ p.content=it.content; p.project=it.project; p.deadline=it.deadline; p.priority=it.priority; return; }
     }
   }
   function removeItem(id){
@@ -1377,8 +1392,8 @@ button.danger:hover{filter:brightness(.94);}
   function syncNextToKanban(c, project, date, priority){
     var key=nextWeekKey(); if(!state.next[key]) state.next[key]=[];
     var nid=uid();
-    state.next[key].push({id:nid, content:c, project:project, date:date, priority:priority});
-    state.items.push({id:uid(), content:c, project:project, priority:priority, status:"todo", date:date, doingAt:"", doneAt:"", srcNext:nid});
+    state.next[key].push({id:nid, content:c, project:project, deadline:date, priority:priority});
+    state.items.push({id:uid(), content:c, project:project, priority:priority, status:"todo", deadline:date, doingAt:"", doneAt:"", srcNext:nid});
     return nid;
   }
   function removeNext(id){
@@ -1397,7 +1412,7 @@ button.danger:hover{filter:brightness(.94);}
       e.preventDefault();
       var c=document.getElementById("fContent").value.trim(); if(!c) return;
       var d=document.getElementById("fDate").value||todayStr();
-      state.items.push({id:uid(),content:c,project:document.getElementById("fProject").value.trim(),priority:document.getElementById("fPriority").value,status:"todo",date:d,doingAt:"",doneAt:""});
+      state.items.push({id:uid(),content:c,project:document.getElementById("fProject").value.trim(),priority:document.getElementById("fPriority").value,status:"todo",deadline:d,doingAt:"",doneAt:""});
       save(); refreshAll();
       document.getElementById("fContent").value=""; document.getElementById("fProject").value="";
     });
@@ -1698,10 +1713,13 @@ button.danger:hover{filter:brightness(.94);}
   }
   function init(){
     document.getElementById("fDate").value=todayStr();
-    // 自绘日期选择器：#fDate（本周工作）/ #nDate（下周计划）/ #editDate（编辑任务弹窗）
+    // 自绘日期选择器：#fDate（本周工作）/ #nDate（下周计划）/ #editDate（截止日期）
+    //                 #editStart / #editEnd（开始 / 结束时间，可点浮层「清除」置空）
     bindDatePicker(document.getElementById("fDate"));
     bindDatePicker(document.getElementById("nDate"));
     bindDatePicker(document.getElementById("editDate"));
+    bindDatePicker(document.getElementById("editStart"));
+    bindDatePicker(document.getElementById("editEnd"));
     // 自绘下拉选择器：#fPriority（本周工作）/ #nPriority（下周计划）/ #editPriority（编辑任务弹窗）
     bindCustomSelect(document.getElementById("fPriority"));
     bindCustomSelect(document.getElementById("nPriority"));

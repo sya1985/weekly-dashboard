@@ -41,8 +41,9 @@
   --up-soft:#d4ee4e57;       /* 进行中 = 浅绿（品牌 lime 的 34% 透明版，用户指定色值） */
   --down:#c0453c;            /* 逾期 / 风险 = 红 */
   --warn:#b06a1c;            /* 临期 = 琥珀 */
-  --cal-same:#BBC5FF;        /* 月历条·周内连续 = 浅蓝（用户指定 2026-09-04） */
-  --cal-xmon:#FCCD3E;        /* 月历条·跨月连续 = 橙（用户指定 2026-09-04） */
+  --cal-same:#BBC5FF;        /* 月历条·浅蓝（2026-09-04 定；⚠️ 2026-09-24 改版后不再引用，保留备查） */
+  --cal-xmon:#FCCD3E;        /* 月历条·橙（2026-09-04 定；现用于「已完成 · 已超期」） */
+  --cal-xmon-soft:rgba(252,205,62,.34);  /* 月历条·柔橙 = --cal-xmon 的 34% 透明版，用于「进行中 · 已超期」，与 --lime-soft 同款半透明风格 */
 
   --r:20px; --r-sm:12px; --r-lg:32px;
   --shadow:0 1px 3px rgba(27,27,20,.05);
@@ -329,13 +330,22 @@ input.flex1{flex:1; min-width:160px;}
 /* 跨天/跨周连续条：直接画在日期格内部——任务覆盖到的每个格子各放一段，
    首段显示文字，跨周接续段带 ↳ 前缀，中间/尾段为无字延续条；
    段与段同高同色，跨周时在下一行接着画，视觉上自然连成一条。
-   颜色语义（用户定稿 2026-09-04）：跨周 = 荧光绿（默认，品牌主色）、周内 = 浅蓝、跨月 = 橙。 */
+   颜色语义（2026-09-24 改版）：不再按跨度着色，改为「状态 × 是否超期」四分类 ——
+   进行中·未超期 = lime-soft（半透明柔绿）、进行中·已超期 = cal-xmon-soft（半透明柔橙）、
+   已完成·未超期 = lime（实心荧光绿）、已完成·已超期 = cal-xmon（实心橙）。
+   ⚠️ 超期口径：已完成看 doneAt > deadline（延期完成）；进行中看 今天 > deadline。
+   deadline 为空一律视为未超期。 */
 .cal-weekrow{grid-column:1 / -1; min-width:0;}
 .cal-seg{position:relative; display:block; height:15px; margin-top:3px; border-radius:5px;
   background:var(--lime); color:var(--accent-2); min-width:0; cursor:default;}
+/* —— 现行四分类（2026-09-24 定稿）—— */
+.cal-seg.doing-ok{background:var(--lime-soft); color:var(--ink-1);}
+.cal-seg.doing-over{background:var(--cal-xmon-soft); color:var(--ink-1);}
+.cal-seg.done-ok{background:var(--lime); color:var(--accent-2);}
+.cal-seg.done-over{background:var(--cal-xmon); color:var(--accent-2);}
+/* —— 旧跨度分类（2026-09-04）：JS 已不再产出这些 class，规则留档不再生效 —— */
 .cal-seg.same{background:var(--cal-same);}
 .cal-seg.xmon{background:var(--cal-xmon);}
-/* 单日（周内不连续）任务用回原来的单日片配色：完成 = 浅绿、进行中 = lime-soft */
 .cal-seg.single{background:var(--lime-soft); color:var(--ink-1);}
 .cal-seg.single.done{background:rgba(63,125,58,.15); color:var(--up);}
 /* 车道空位占位片：不可见但撑住行高，保证同一任务横向各格对齐同一条车道 */
@@ -648,7 +658,7 @@ input.flex1{flex:1; min-width:160px;}
     var t=todayStr(), overdue=[], today=[];
     state.items.forEach(function(it){
       if(it.status==="done") return;
-      if(it.date<t) overdue.push(it); else if(it.date===t) today.push(it);
+      if(it.deadline<t) overdue.push(it); else if(it.deadline===t) today.push(it);
     });
     return {overdue:overdue,today:today};
   }
@@ -663,11 +673,11 @@ input.flex1{flex:1; min-width:160px;}
       return;
     }
     a.overdue.concat(a.today).forEach(function(it){
-      var isOverdue=it.date<t;
+      var isOverdue=it.deadline<t;
       var wrap=el('<div class="alert-item '+(isOverdue?"overdue":"")+'"></div>');
       var meta=el('<div class="meta"></div>');
       meta.appendChild(el('<div class="t">'+esc(it.content)+'</div>'));
-      meta.appendChild(el('<div class="s">'+esc(it.project||"未分类")+' · '+statusLabel(it.status)+' · '+esc(it.date)+'</div>'));
+      meta.appendChild(el('<div class="s">'+esc(it.project||"未分类")+' · '+statusLabel(it.status)+' · '+esc(it.deadline)+'</div>'));
       wrap.appendChild(meta);
       if(isOverdue) wrap.appendChild(el('<span class="pill">逾期</span>'));
       var btn=el('<button class="btn-done sm">完成</button>');
@@ -684,7 +694,7 @@ input.flex1{flex:1; min-width:160px;}
     weeks.forEach(function(wm){
       var wr=weekRange(wm);
       state.items.forEach(function(it){
-        if(typeof it.date==="string" && it.date>=wr.mon && it.date<=wr.sun) count++;
+        if(typeof it.deadline==="string" && it.deadline>=wr.mon && it.deadline<=wr.sun) count++;
       });
     });
     return count;
@@ -700,8 +710,11 @@ input.flex1{flex:1; min-width:160px;}
     var gridStart=fmt(firstCell), gridEnd=addDays(gridStart,total-1), today=todayStr();
     // 任务 → 连续条（2026-09-04 显示规则）：doing_at 为起点；
     // 有 done_at 以 done_at 为终点，没有（进行中）以当前实际日期为终点；纯未完成（无起点）不上条。
-    // 颜色语义：单日（周内不连续）= 原单日片配色（完成浅绿/进行中 lime-soft）、
-    //           跨月 = 橙(--cal-xmon)、跨周 = 荧光绿（品牌主色）、周内连续 = 浅蓝(--cal-same)。
+    // 颜色语义（2026-09-24 改版）：不再按跨度区分，改为「状态 × 是否超期」四分类 ——
+    //           进行中·未超期 = lime-soft、进行中·已超期 = cal-xmon-soft、
+    //           已完成·未超期 = lime、已完成·已超期 = cal-xmon。
+    // ⚠️ 2026-09-24 起条色改按「状态 × 是否超期」分类，本函数不再被调用；
+    //    保留以支持回退到「按跨度着色」的旧方案（CSS 里的 .same / .xmon / .single 同理）。
     function monday(ds){ var d=parse(ds); var off=(d.getDay()+6)%7; d.setDate(d.getDate()-off); return fmt(d); }
     var spans=[];
     state.items.forEach(function(it){
@@ -710,7 +723,11 @@ input.flex1{flex:1; min-width:160px;}
       if(e&&e<s) e=s;
       if(!e) e=today;
       if(e<gridStart||s>gridEnd) return;   // 与当前视图无交集
-      var cat=(s===e)?"single":((s.slice(0,7)!==e.slice(0,7))?"xmon":((monday(s)!==monday(e))?"":"same"));
+      // 条色四分类（2026-09-24）：⚠️ 超期口径 —— 已完成看 doneAt > deadline（延期完成），
+      // 进行中看 今天 > deadline；deadline 为空一律视为未超期。
+      var dl=it.deadline||"";
+      var overdue=(it.status==="done") ? (!!dl && (it.doneAt||e)>dl) : (!!dl && today>dl);
+      var cat=(it.status==="done"?"done-":"doing-")+(overdue?"over":"ok");
       spans.push({content:it.content||"(未命名)", start:s, end:e, cat:cat,
                   project:it.project||"", priority:it.priority||"", status:it.status});
     });
@@ -762,7 +779,7 @@ input.flex1{flex:1; min-width:160px;}
           var info='任务：'+sp.content+'\n项目：'+(sp.project||"未分类")+'\n优先级：'+(sp.priority||"未设置")
                   +'\n区间：'+sp.start+' ~ '+sp.end+'\n状态：'+statusLabel(sp.status);
           var label=esc(isHead?(ds===sp.start?sp.content:'↳ '+sp.content):'');
-          html+='<span class="cal-seg '+sp.cat+(sp.cat==="single"&&sp.status==="done"?' done':'')+(isHead?' head':'')+(hasL?' cont-l':'')+(hasR?' cont-r':'')+'" tabindex="0" aria-label="'+esc(info.replace(/\n/g,"，"))+'">'
+          html+='<span class="cal-seg '+sp.cat+(isHead?' head':'')+(hasL?' cont-l':'')+(hasR?' cont-r':'')+'" tabindex="0" aria-label="'+esc(info.replace(/\n/g,"，"))+'">'
               +(label?'<span class="cal-seg-label">'+label+'</span>':'')
               +'<span class="task-tooltip">'+esc(info).replace(/\n/g,"<br>")+'</span></span>';
         }

@@ -79,13 +79,13 @@ def seed_payload():
     # ⚠️ 示例工作项必须自带 doing_at / done_at：首页「执行月历」画连续条的判定是
     #    `s = doingAt; if(!s || status==='todo') return;`——缺 doingAt 的条目会被整条跳过，
     #    表现为「首次打开月历一片空白，进一趟周报页再回来才有任务」（周报页 applyState 会补齐并回写）。
-    #    补齐口径与周报工作台 applyState() 完全一致：done→doneAt=起点=date；doing→doingAt=date；todo→都空。
+    #    补齐口径与周报工作台 applyState() 完全一致：done→doneAt=起点=deadline；doing→doingAt=deadline；todo→都空。
     def _item(content, priority, status, day, start=None, end=None):
         """构造一条示例工作项。
 
-        :param day:   任务归属日期（看板按此把它归入某一周）
-        :param start: 月历连续条起点，缺省 = date（done/doing）或空（todo）
-        :param end:   月历连续条终点，缺省 = date（done）或空（doing 由前端自动取「今天」、todo 为空）
+        :param day:   截止日期 deadline（看板按此把它归入某一周）
+        :param start: 月历连续条起点（开始时间），缺省 = deadline（done/doing）或空（todo）
+        :param end:   月历连续条终点（结束时间），缺省 = deadline（done）或空（doing 由前端自动取「今天」、todo 为空）
         """
         d = _ds(day)
         if start is None:
@@ -93,7 +93,7 @@ def seed_payload():
         if end is None:
             end = d if status == "done" else ""
         return {
-            "id": _uid(), "content": content, "project": "示例", "priority": priority, "status": status, "date": d,
+            "id": _uid(), "content": content, "project": "示例", "priority": priority, "status": status, "deadline": d,
             "doingAt": _ds(start), "doneAt": _ds(end)
         }
 
@@ -165,9 +165,9 @@ CREATE TABLE IF NOT EXISTS work_items (
     project    TEXT DEFAULT '',
     priority   TEXT DEFAULT '',
     status     TEXT DEFAULT 'todo',
-    date       TEXT DEFAULT '',
-    doing_at   TEXT DEFAULT '',
-    done_at    TEXT DEFAULT '',
+    deadline   TEXT DEFAULT '',   -- 截止日期（2026-09-24 由 date 列重命名）
+    doing_at   TEXT DEFAULT '',   -- 开始时间（可在编辑弹窗手填；状态流转亦会写入）
+    done_at    TEXT DEFAULT '',   -- 结束时间（可在编辑弹窗手填；状态流转亦会写入）
     src_next   TEXT DEFAULT '',
     extra      TEXT DEFAULT '{}',
     updated_at TEXT
@@ -227,7 +227,30 @@ def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")   # ⚠️ SQLite 默认关闭外键，必须逐连接开启
     conn.executescript(SCHEMA_SQL)
+    _migrate_date_to_deadline(conn)
     return conn
+
+
+def _migrate_date_to_deadline(conn):
+    """把老库 work_items.date 列改名为 deadline（一次性、幂等）。
+
+    ⚠️ CREATE TABLE IF NOT EXISTS 对已存在的表不生效，老库的 date 列不会自动跟着
+    SCHEMA_SQL 改名，必须显式 ALTER TABLE ... RENAME COLUMN，否则写入时会报
+    "table work_items has no column named deadline"。判定口径：
+      - 同时存在 date 与 deadline → 异常态（理论上不会出现），保留 deadline 并丢弃 date 不可能，
+        这里选择不动，交由人工处理；
+      - 只有 date → 改名为 deadline；
+      - 只有 deadline → 已迁移过，跳过。
+
+    :param conn: sqlite3.Connection
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(work_items)")]
+    if "deadline" in cols:
+        return                       # 新结构（或已迁移），无需处理
+    if "date" in cols:
+        # ⚠️ SQLite 3.25+ 才支持 RENAME COLUMN；Python 3.9+ 自带版本均满足
+        conn.execute("ALTER TABLE work_items RENAME COLUMN date TO deadline")
+        conn.commit()
 
 
 def _known_item_keys():
@@ -235,7 +258,25 @@ def _known_item_keys():
 
     :return: set[str]
     """
-    return {"id", "content", "project", "priority", "status", "date", "doingAt", "doneAt", "srcNext"}
+    # ⚠️ "date" 已于 2026-09-24 改名 "deadline"（语义=截止日期）；旧数据兼容见 _normalize_item_dates
+    return {"id", "content", "project", "priority", "status", "deadline", "doingAt", "doneAt", "srcNext"}
+
+
+def _normalize_item_dates(it, known, extra):
+    """把旧契约字段 date 归一化成 deadline，保证导入老 JSON 备份不丢截止日期。
+
+    ⚠️ 2026-09-24 之前工作项的日期字段叫 date。老备份（data/weekly.db.bak、导出的
+    JSON）里仍是 date，若不做兜底，它会因不在 _known_item_keys 里而落进 extra 列、
+    deadline 列为空，前端表现为「卡片日期空白 + 月历不画条」。
+    优先级：deadline 有值则用它，否则回落到 date。
+
+    :param it: 原始 item dict
+    :param known: _split_known 拆出的已知字段子集（原地修改）
+    :param extra: _split_known 拆出的契约外字段（原地移除 date）
+    """
+    if not known.get("deadline"):
+        known["deadline"] = it.get("date", "") or ""
+    extra.pop("date", None)
 
 
 def _split_known(d, known):
@@ -299,8 +340,9 @@ def _write_snapshot(conn, state):
     # ---- 工作项 ----
     for it in state.get("items", []):
         known, extra = _split_known(it, _known_item_keys())
+        _normalize_item_dates(it, known, extra)   # 旧契约 date -> deadline，须在 INSERT 之前
         conn.execute(
-            "INSERT INTO work_items(id, content, project, priority, status, date, doing_at, done_at, src_next, extra, updated_at) "
+            "INSERT INTO work_items(id, content, project, priority, status, deadline, doing_at, done_at, src_next, extra, updated_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 known.get("id") or _uid(),
@@ -308,7 +350,7 @@ def _write_snapshot(conn, state):
                 known.get("project", ""),
                 known.get("priority", ""),
                 known.get("status", "todo"),
-                known.get("date", ""),
+                known.get("deadline", ""),
                 known.get("doingAt", ""),
                 known.get("doneAt", ""),
                 known.get("srcNext", ""),
@@ -420,13 +462,15 @@ def _row_to_item(row):
     :param row: SELECT 结果元组
     :return: dict
     """
-    (rid, content, project, priority, status, date, doing_at, done_at, src_next, extra) = row
+    (rid, content, project, priority, status, deadline, doing_at, done_at, src_next, extra) = row
     d = {
         "id": rid, "content": content, "project": project, "priority": priority,
-        "status": status, "date": date, "doingAt": doing_at, "doneAt": done_at, "srcNext": src_next,
+        "status": status, "deadline": deadline, "doingAt": doing_at, "doneAt": done_at, "srcNext": src_next,
     }
     try:
-        d.update(json.loads(extra or "{}"))
+        ex = json.loads(extra or "{}")
+        ex.pop("date", None)   # ⚠️ 历史 extra 里可能残留旧字段名 date，读出即丢弃，避免前端 state 长期带脏键
+        d.update(ex)
     except Exception:
         pass  # ⚠️ extra 损坏时丢弃扩展字段，不阻断整体读取
     return d
@@ -454,8 +498,8 @@ def load_state():
 
         # ---- 工作项 ----
         items = [_row_to_item(r) for r in conn.execute(
-            "SELECT id, content, project, priority, status, date, doing_at, done_at, src_next, extra "
-            "FROM work_items ORDER BY date, rowid"
+            "SELECT id, content, project, priority, status, deadline, doing_at, done_at, src_next, extra "
+            "FROM work_items ORDER BY deadline, rowid"
         )]
 
         # ---- 下周计划：按 week_monday 分组 ----
