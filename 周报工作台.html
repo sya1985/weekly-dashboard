@@ -874,7 +874,22 @@ button.danger:hover{filter:brightness(.94);}
     return res;
   }
   function nextWeekKey(){ return addDays(state.viewWeek, 7); }   // 当前周视图的下一周（周一）
-  function getWeekItems(wr){ return state.items.filter(function(it){ return it.deadline>=wr.mon && it.deadline<=wr.sun; }); }
+  // 归周口径（2026-09-25 定稿）：不再「deadline 落在本周即入列」，改为分状态处理 ——
+  //   ① 已完成（done）：按 `doneAt`（实际完成日）归周，缺 doneAt 时兜底用 deadline。
+  //      ⚠️ 用完成日而非 deadline，是为了让「拖成完成」时卡片原地不动（setStatus 会把 doneAt 写成今天）——
+  //         否则一条 deadline 在别周的卡片一拖成完成就会当场从看板飞走，而「本周完成」本该记本周干完的活。
+  //      ⚠️ 副作用：在编辑弹窗手动改「结束时间」，卡片会随之跳到那一天所在的周（手动改的，符合预期）。
+  //   ② 未完成（todo / doing）：不按任何日期字段归周，一律挂在「现实中的当前周」——
+  //      现实时间前进一周，这批卡片整体挪到下一周。
+  // 推论：查看历史周（不含今天的周）时未完成的任务不出现，该周只展示当周完成的项。
+  function isCurrentWeek(wr){ var t=todayStr(); return t>=wr.mon && t<=wr.sun; }
+  function getWeekItems(wr){
+    var cur=isCurrentWeek(wr);
+    return state.items.filter(function(it){
+      if(it.status==="done"){ var d=it.doneAt||it.deadline; return d>=wr.mon && d<=wr.sun; }
+      return cur;
+    });
+  }
   function monthKey(d){ return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2); }
 
   /* ---------- 渲染层（互不调用） ---------- */
