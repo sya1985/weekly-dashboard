@@ -22,7 +22,7 @@ import os
 import uuid
 import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 # ---------------- 路径与端口 ----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -581,7 +581,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """GET 路由：页面 / 静态资源 / API 读取。"""
-        path = urlparse(self.path).path
+        # ⚠️ 必须 unquote：urlparse 不做百分号解码，含空格/中文的资产名
+        #    （如 source-icons8-avocado-100%20(1).png）会按字面 %20 找文件而 404（2026-10-23 踩坑）
+        path = unquote(urlparse(self.path).path)
         if path in PAGES:
             try:
                 with open(PAGES[path], "r", encoding="utf-8") as f:
@@ -604,6 +606,7 @@ class Handler(BaseHTTPRequestHandler):
                     ".jpeg": "image/jpeg",
                     ".webp": "image/webp",
                     ".svg": "image/svg+xml; charset=utf-8",
+                    ".ico": "image/x-icon",   # favicon，2026-10-23 补（此前 fallback 成 octet-stream）
                     ".html": "text/html; charset=utf-8",
                 }
                 suffix = os.path.splitext(asset_path)[1].lower()
